@@ -26,6 +26,7 @@
                 </div>
                 <div class="action-row">
                     <button id="submit-btn" class="btn btn-primary">Submit Feedback</button>
+                    <button id="solved-btn" class="btn btn-solved">Solved!</button>
                     <button id="reset-btn" class="btn btn-secondary">Reset</button>
                 </div>
                 <p class="hint">Click each letter to toggle: <span class="tag absent-tag">absent</span> → <span class="tag present-tag">misplaced</span> → <span class="tag correct-tag">correct</span></p>
@@ -58,6 +59,26 @@
                     <p id="computation-time"></p>
                 </div>
             </div>
+        </div>
+    </div>
+
+        <div id="session-stats" class="hidden">
+            <h3>Session Stats</h3>
+            <div class="stats-summary">
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-played">0</div>
+                    <div class="stat-label">Played</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-win-pct">0%</div>
+                    <div class="stat-label">Win %</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-avg">-</div>
+                    <div class="stat-label">Avg Guesses</div>
+                </div>
+            </div>
+            <div id="stat-distribution"></div>
         </div>
     </div>
 

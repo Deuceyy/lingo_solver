@@ -12,6 +12,9 @@ let totalRemaining = 0;
 let answerSet = new Set();
 let knownGreens = [null, null, null, null, null]; // confirmed green letters per position
 
+// Session stats
+let sessionStats = { games: 0, wins: 0, totalGuesses: 0, distribution: {1:0, 2:0, 3:0, 4:0, 5:0, 6:0, fail:0} };
+
 const PATTERN_CLASSES = ['absent', 'present', 'correct'];
 const PATTERN_LABELS = ['absent', 'misplaced', 'correct'];
 
@@ -345,24 +348,52 @@ function submitFeedback() {
     }, 150);
 }
 
+function markSolved() {
+    if (isComputing) return;
+
+    // Set all tiles to green
+    currentPattern = [2, 2, 2, 2, 2];
+    const tiles = document.getElementById('current-row').children;
+    for (let i = 0; i < 5; i++) {
+        tiles[i].className = 'tile correct';
+    }
+
+    // Record greens and submit
+    addToHistory(currentGuessWord, currentPattern);
+    for (let i = 0; i < 5; i++) {
+        knownGreens[i] = currentGuessWord[i];
+    }
+
+    if (worker) {
+        worker.postMessage({ type: 'applyGuess', data: { word: currentGuessWord, pattern: currentPattern } });
+    } else {
+        mainThreadSolver.applyGuess(currentGuessWord, currentPattern);
+    }
+
+    showSolved(currentGuessWord, guessNumber);
+}
+
 function showSolved(word, numGuesses) {
     document.getElementById('current-guess-section').classList.add('hidden');
     const solvedEl = document.getElementById('solved-message');
     solvedEl.classList.remove('hidden');
 
+    // Log session stats
+    sessionStats.games++;
     if (word) {
+        sessionStats.wins++;
+        sessionStats.totalGuesses += numGuesses;
+        sessionStats.distribution[numGuesses] = (sessionStats.distribution[numGuesses] || 0) + 1;
         document.getElementById('solved-text').textContent =
             `Found "${word.toUpperCase()}" in ${numGuesses} guess${numGuesses !== 1 ? 'es' : ''}!`;
     } else {
-        if (worker) {
-            // Get remaining from last known
-            document.getElementById('solved-text').textContent =
-                `Couldn't solve in 6 guesses. ${totalRemaining} words remaining.`;
-        } else {
-            document.getElementById('solved-text').textContent =
-                `Couldn't solve in 6 guesses. ${mainThreadSolver.remainingAnswers.length} words remaining.`;
-        }
+        sessionStats.distribution.fail++;
+        const rem = worker ? totalRemaining : mainThreadSolver.remainingAnswers.length;
+        document.getElementById('solved-text').textContent =
+            `Couldn't solve in 6 guesses. ${rem} words remaining.`;
     }
+
+    updateSessionStats();
 }
 
 function showError(msg) {
@@ -409,10 +440,54 @@ function hideLoading() {
     if (overlay) overlay.classList.add('hidden');
 }
 
+// ── Session stats ────────────────────────────────────────────────────────────
+
+function updateSessionStats() {
+    const el = document.getElementById('session-stats');
+    if (!el) return;
+
+    const { games, wins, totalGuesses, distribution } = sessionStats;
+    if (games === 0) {
+        el.classList.add('hidden');
+        return;
+    }
+
+    el.classList.remove('hidden');
+    const avg = wins > 0 ? (totalGuesses / wins).toFixed(2) : '-';
+    const winPct = Math.round((wins / games) * 100);
+
+    document.getElementById('stat-played').textContent = games;
+    document.getElementById('stat-win-pct').textContent = winPct + '%';
+    document.getElementById('stat-avg').textContent = avg;
+
+    // Render distribution bars
+    const distEl = document.getElementById('stat-distribution');
+    distEl.innerHTML = '';
+    const maxCount = Math.max(1, ...Object.values(distribution));
+
+    for (let i = 1; i <= 6; i++) {
+        const count = distribution[i] || 0;
+        const row = document.createElement('div');
+        row.className = 'dist-row';
+        row.innerHTML = `<span class="dist-label">${i}</span>` +
+            `<div class="dist-bar-track"><div class="dist-bar" style="width:${Math.max(count > 0 ? 8 : 0, (count / maxCount) * 100)}%">${count}</div></div>`;
+        distEl.appendChild(row);
+    }
+    const failCount = distribution.fail || 0;
+    if (failCount > 0) {
+        const row = document.createElement('div');
+        row.className = 'dist-row';
+        row.innerHTML = `<span class="dist-label">X</span>` +
+            `<div class="dist-bar-track"><div class="dist-bar dist-bar-fail" style="width:${Math.max(8, (failCount / maxCount) * 100)}%">${failCount}</div></div>`;
+        distEl.appendChild(row);
+    }
+}
+
 // ── Event listeners ─────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('submit-btn').addEventListener('click', submitFeedback);
+    document.getElementById('solved-btn').addEventListener('click', markSolved);
     document.getElementById('reset-btn').addEventListener('click', startNewGame);
     document.getElementById('play-again-btn').addEventListener('click', startNewGame);
 
