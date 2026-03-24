@@ -17,6 +17,18 @@ self.onmessage = function(e) {
             break;
         }
 
+        case 'setJackpotMode': {
+            solver.jackpotMode = data.enabled;
+            self.postMessage({ type: 'jackpotModeSet' });
+            break;
+        }
+
+        case 'setUsedWords': {
+            solver.setUsedWords(data.words);
+            self.postMessage({ type: 'usedWordsSet', data: { poolSize: solver.answerWords.length } });
+            break;
+        }
+
         case 'getBestGuess': {
             const guess = solver.getBestGuess();
             self.postMessage({
@@ -26,7 +38,8 @@ self.onmessage = function(e) {
                     remaining: solver.remainingAnswers.length,
                     remainingWords: solver.remainingAnswers.slice(0, 100),
                     entropy: solver._lastEntropy,
-                    computeTime: solver._lastComputeTime
+                    computeTime: solver._lastComputeTime,
+                    jackpotChance: solver._lastJackpotChance
                 }
             });
             break;

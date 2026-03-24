@@ -11,17 +11,59 @@ let allRemainingWords = [];
 let totalRemaining = 0;
 let answerSet = new Set();
 let knownGreens = [null, null, null, null, null]; // confirmed green letters per position
+let jackpotMode = false;
 
 // Session stats
 let sessionStats = { games: 0, wins: 0, totalGuesses: 0, distribution: {1:0, 2:0, 3:0, 4:0, 5:0, 6:0, fail:0} };
 
+// Used words (persisted in localStorage)
+let usedWords = [];
+
 const PATTERN_CLASSES = ['absent', 'present', 'correct'];
 const PATTERN_LABELS = ['absent', 'misplaced', 'correct'];
+
+// ── Persistence ─────────────────────────────────────────────────────────────
+
+function loadUsedWords() {
+    try {
+        const stored = localStorage.getItem('wordle-solver-used-words');
+        if (stored) {
+            usedWords = JSON.parse(stored);
+        }
+    } catch (e) {
+        usedWords = [];
+    }
+}
+
+function saveUsedWords() {
+    try {
+        localStorage.setItem('wordle-solver-used-words', JSON.stringify(usedWords));
+    } catch (e) {
+        // localStorage may be unavailable
+    }
+}
+
+function loadJackpotMode() {
+    try {
+        const stored = localStorage.getItem('wordle-solver-jackpot-mode');
+        jackpotMode = stored === 'true';
+    } catch (e) {
+        jackpotMode = false;
+    }
+}
+
+function saveJackpotMode() {
+    try {
+        localStorage.setItem('wordle-solver-jackpot-mode', jackpotMode ? 'true' : 'false');
+    } catch (e) {}
+}
 
 // ── Initialization ──────────────────────────────────────────────────────────
 
 async function init() {
     showLoading('Loading word banks...');
+    loadUsedWords();
+    loadJackpotMode();
 
     try {
         const [answersResp, wordsResp] = await Promise.all([
@@ -41,7 +83,6 @@ async function init() {
 
         showLoading('Initializing solver engine...');
 
-        // Try Web Worker first, fall back to main thread
         try {
             await initWorker(answerList, fullGuessList);
         } catch (workerErr) {
@@ -49,7 +90,12 @@ async function init() {
             await initMainThread(answerList, fullGuessList);
         }
 
+        // Send saved state to solver
+        syncSolverSettings();
+
         hideLoading();
+        renderUsedWordsUI();
+        renderJackpotToggle();
         startNewGame();
     } catch (err) {
         console.error('Failed to load word banks:', err);
@@ -81,6 +127,16 @@ async function initMainThread(answers, allWords) {
     mainThreadSolver = new WordleSolver(answers, allWords);
 }
 
+function syncSolverSettings() {
+    if (worker) {
+        worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+        worker.postMessage({ type: 'setJackpotMode', data: { enabled: jackpotMode } });
+    } else if (mainThreadSolver) {
+        mainThreadSolver.setUsedWords(usedWords);
+        mainThreadSolver.jackpotMode = jackpotMode;
+    }
+}
+
 function startNewGame() {
     guessNumber = 1;
     currentPattern = [0, 0, 0, 0, 0];
@@ -90,6 +146,9 @@ function startNewGame() {
     document.getElementById('solved-message').classList.add('hidden');
     document.getElementById('current-guess-section').classList.remove('hidden');
     document.getElementById('remaining-count').style.color = '';
+
+    // Sync settings before reset
+    syncSolverSettings();
 
     if (worker) {
         worker.postMessage({ type: 'reset' });
@@ -119,7 +178,7 @@ function requestBestGuess() {
     worker.onmessage = function(e) {
         if (e.data.type === 'bestGuess') {
             isComputing = false;
-            const { guess, remaining, remainingWords, entropy, computeTime } = e.data.data;
+            const { guess, remaining, remainingWords, entropy, computeTime, jackpotChance } = e.data.data;
 
             if (!guess) {
                 showError('No matching words remain. Check your feedback.');
@@ -133,7 +192,7 @@ function requestBestGuess() {
             renderCurrentRow(guess);
             updateGuessLabel();
             updateCandidates();
-            updateAlgoInfo(entropy, computeTime);
+            updateAlgoInfo(entropy, computeTime, jackpotChance);
             setSubmitEnabled(true);
             hideComputingIndicator();
         }
@@ -157,7 +216,7 @@ function requestBestGuessMainThread() {
     renderCurrentRow(guess);
     updateGuessLabel();
     updateCandidates();
-    updateAlgoInfo(mainThreadSolver._lastEntropy, mainThreadSolver._lastComputeTime);
+    updateAlgoInfo(mainThreadSolver._lastEntropy, mainThreadSolver._lastComputeTime, mainThreadSolver._lastJackpotChance);
     setSubmitEnabled(true);
 }
 
@@ -169,7 +228,6 @@ function renderCurrentRow(word) {
 
     for (let i = 0; i < 5; i++) {
         const tile = document.createElement('div');
-        // Auto-set green if this letter matches a known green at this position
         const isKnownGreen = knownGreens[i] !== null && word[i] === knownGreens[i];
         if (isKnownGreen) {
             tile.className = 'tile correct';
@@ -211,7 +269,6 @@ function addToHistory(word, pattern) {
         row.appendChild(tile);
     }
 
-    // Add a summary line showing letter info
     const summaryRow = document.createElement('div');
     summaryRow.className = 'guess-summary';
     const correctLetters = [];
@@ -257,8 +314,10 @@ function updateCandidates() {
         if (word === currentGuessWord) {
             el.classList.add('is-answer');
         }
+        if (usedWords.includes(word)) {
+            el.classList.add('is-used');
+        }
         el.textContent = word;
-        // Allow clicking a candidate to use it as the guess
         el.style.cursor = 'pointer';
         el.addEventListener('click', () => useCustomGuess(word));
         container.appendChild(el);
@@ -273,15 +332,25 @@ function updateCandidates() {
     }
 }
 
-function updateAlgoInfo(entropy, computeTime) {
+function updateAlgoInfo(entropy, computeTime, jackpotChance) {
     const entropyEl = document.getElementById('entropy-display');
     const timeEl = document.getElementById('computation-time');
+    const jackpotEl = document.getElementById('jackpot-display');
 
     if (entropy !== undefined && entropy !== null) {
         entropyEl.innerHTML = `<strong>Entropy:</strong> ${entropy.toFixed(3)} bits`;
     }
     if (computeTime !== undefined && computeTime !== null) {
         timeEl.innerHTML = `<strong>Compute time:</strong> ${computeTime.toFixed(0)}ms`;
+    }
+    if (jackpotEl) {
+        if (jackpotChance !== undefined && jackpotChance !== null && jackpotChance > 0) {
+            const pct = (jackpotChance * 100).toFixed(2);
+            jackpotEl.innerHTML = `<strong>Jackpot chance:</strong> ${pct}% (1 in ${Math.round(1/jackpotChance)})`;
+            jackpotEl.classList.remove('hidden');
+        } else {
+            jackpotEl.classList.add('hidden');
+        }
     }
 }
 
@@ -292,7 +361,7 @@ function useCustomGuess(word) {
     if (word.length !== 5) return;
 
     currentGuessWord = word.toLowerCase();
-    renderCurrentRow(currentGuessWord); // renderCurrentRow handles knownGreens and resets currentPattern
+    renderCurrentRow(currentGuessWord);
 }
 
 function handleManualInput(e) {
@@ -339,7 +408,6 @@ function submitFeedback() {
 
     guessNumber++;
 
-    // Clear manual input
     const manualInput = document.getElementById('manual-word-input');
     if (manualInput) manualInput.value = '';
 
@@ -351,14 +419,12 @@ function submitFeedback() {
 function markSolved() {
     if (isComputing) return;
 
-    // Set all tiles to green
     currentPattern = [2, 2, 2, 2, 2];
     const tiles = document.getElementById('current-row').children;
     for (let i = 0; i < 5; i++) {
         tiles[i].className = 'tile correct';
     }
 
-    // Record greens and submit
     addToHistory(currentGuessWord, currentPattern);
     for (let i = 0; i < 5; i++) {
         knownGreens[i] = currentGuessWord[i];
@@ -386,6 +452,9 @@ function showSolved(word, numGuesses) {
         sessionStats.distribution[numGuesses] = (sessionStats.distribution[numGuesses] || 0) + 1;
         document.getElementById('solved-text').textContent =
             `Found "${word.toUpperCase()}" in ${numGuesses} guess${numGuesses !== 1 ? 'es' : ''}!`;
+
+        // Auto-add solved word to used words list
+        addUsedWord(word.toLowerCase());
     } else {
         sessionStats.distribution.fail++;
         const rem = worker ? totalRemaining : mainThreadSolver.remainingAnswers.length;
@@ -440,6 +509,140 @@ function hideLoading() {
     if (overlay) overlay.classList.add('hidden');
 }
 
+// ── Used words management ───────────────────────────────────────────────────
+
+function addUsedWord(word) {
+    word = word.toLowerCase().trim();
+    if (word.length !== 5 || usedWords.includes(word)) return;
+    usedWords.push(word);
+    usedWords.sort();
+    saveUsedWords();
+    renderUsedWordsUI();
+    // Update solver with new used words list
+    if (worker) {
+        worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+    } else if (mainThreadSolver) {
+        mainThreadSolver.setUsedWords(usedWords);
+    }
+}
+
+function removeUsedWord(word) {
+    usedWords = usedWords.filter(w => w !== word);
+    saveUsedWords();
+    renderUsedWordsUI();
+    if (worker) {
+        worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+    } else if (mainThreadSolver) {
+        mainThreadSolver.setUsedWords(usedWords);
+    }
+}
+
+function clearUsedWords() {
+    if (!confirm(`Clear all ${usedWords.length} used words?`)) return;
+    usedWords = [];
+    saveUsedWords();
+    renderUsedWordsUI();
+    if (worker) {
+        worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+    } else if (mainThreadSolver) {
+        mainThreadSolver.setUsedWords(usedWords);
+    }
+}
+
+function handleAddUsedWord() {
+    const input = document.getElementById('add-used-word-input');
+    const val = input.value.toLowerCase().replace(/[^a-z]/g, '').trim();
+    if (val.length === 5) {
+        addUsedWord(val);
+        input.value = '';
+    }
+}
+
+function handleBulkImport() {
+    const input = document.getElementById('bulk-import-input');
+    const text = input.value.toLowerCase();
+    // Accept comma, space, newline separated words
+    const words = text.split(/[\s,]+/).map(w => w.replace(/[^a-z]/g, '').trim()).filter(w => w.length === 5);
+    let added = 0;
+    words.forEach(w => {
+        if (!usedWords.includes(w)) {
+            usedWords.push(w);
+            added++;
+        }
+    });
+    if (added > 0) {
+        usedWords.sort();
+        saveUsedWords();
+        renderUsedWordsUI();
+        if (worker) {
+            worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+        } else if (mainThreadSolver) {
+            mainThreadSolver.setUsedWords(usedWords);
+        }
+    }
+    input.value = '';
+    // Show feedback
+    const countEl = document.getElementById('used-words-count');
+    if (countEl && added > 0) {
+        const orig = countEl.textContent;
+        countEl.textContent = `+${added} added!`;
+        countEl.style.color = 'var(--correct)';
+        setTimeout(() => {
+            countEl.textContent = `${usedWords.length} words tracked`;
+            countEl.style.color = '';
+        }, 1500);
+    }
+}
+
+function renderUsedWordsUI() {
+    const countEl = document.getElementById('used-words-count');
+    if (countEl) {
+        countEl.textContent = `${usedWords.length} words tracked`;
+        countEl.style.color = '';
+    }
+
+    const listEl = document.getElementById('used-words-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    if (usedWords.length === 0) {
+        listEl.innerHTML = '<span class="used-words-empty">No words tracked yet. Solved words are added automatically.</span>';
+        return;
+    }
+
+    // Show all used words as removable tags
+    usedWords.forEach(word => {
+        const tag = document.createElement('span');
+        tag.className = 'used-word-tag';
+        tag.innerHTML = `${word.toUpperCase()} <span class="remove-word" title="Remove">&times;</span>`;
+        tag.querySelector('.remove-word').addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeUsedWord(word);
+        });
+        listEl.appendChild(tag);
+    });
+}
+
+// ── Jackpot mode toggle ─────────────────────────────────────────────────────
+
+function toggleJackpotMode() {
+    jackpotMode = !jackpotMode;
+    saveJackpotMode();
+    renderJackpotToggle();
+    syncSolverSettings();
+}
+
+function renderJackpotToggle() {
+    const toggle = document.getElementById('jackpot-toggle');
+    if (!toggle) return;
+    toggle.checked = jackpotMode;
+
+    const label = document.getElementById('jackpot-mode-label');
+    if (label) {
+        label.textContent = jackpotMode ? 'ON — first guess from answer pool (jackpot eligible)' : 'OFF — using SALET (pure info gain)';
+    }
+}
+
 // ── Session stats ────────────────────────────────────────────────────────────
 
 function updateSessionStats() {
@@ -460,7 +663,6 @@ function updateSessionStats() {
     document.getElementById('stat-win-pct').textContent = winPct + '%';
     document.getElementById('stat-avg').textContent = avg;
 
-    // Render distribution bars
     const distEl = document.getElementById('stat-distribution');
     distEl.innerHTML = '';
     const maxCount = Math.max(1, ...Object.values(distribution));
@@ -491,9 +693,41 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('reset-btn').addEventListener('click', startNewGame);
     document.getElementById('play-again-btn').addEventListener('click', startNewGame);
 
+    const jackpotToggle = document.getElementById('jackpot-toggle');
+    if (jackpotToggle) {
+        jackpotToggle.addEventListener('change', toggleJackpotMode);
+    }
+
+    const addWordBtn = document.getElementById('add-used-word-btn');
+    if (addWordBtn) {
+        addWordBtn.addEventListener('click', handleAddUsedWord);
+    }
+
+    const addWordInput = document.getElementById('add-used-word-input');
+    if (addWordInput) {
+        addWordInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleAddUsedWord();
+        });
+    }
+
+    const bulkImportBtn = document.getElementById('bulk-import-btn');
+    if (bulkImportBtn) {
+        bulkImportBtn.addEventListener('click', handleBulkImport);
+    }
+
+    const clearBtn = document.getElementById('clear-used-words-btn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearUsedWords);
+    }
+
     // Keyboard shortcut: Enter to submit
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !document.getElementById('current-guess-section').classList.contains('hidden')) {
+            // Don't submit if focus is in used-words inputs
+            if (document.activeElement && (
+                document.activeElement.id === 'add-used-word-input' ||
+                document.activeElement.id === 'bulk-import-input'
+            )) return;
             e.preventDefault();
             submitFeedback();
         }

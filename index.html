@@ -10,7 +10,7 @@
     <div id="app">
         <header>
             <h1>Wordle Solver</h1>
-            <p class="subtitle">Entropy-optimized · Avg ~3.42 guesses</p>
+            <p class="subtitle">Entropy-optimized · Competition mode</p>
         </header>
 
         <div id="board-section">
@@ -54,13 +54,40 @@
                 <h3>Algorithm Info</h3>
                 <div id="algo-info">
                     <p><strong>Method:</strong> Maximum entropy (information gain)</p>
-                    <p><strong>First word:</strong> SALET (optimal opener)</p>
+                    <p id="first-word-display"><strong>First word:</strong> SALET (optimal opener)</p>
                     <p id="entropy-display"></p>
                     <p id="computation-time"></p>
+                    <p id="jackpot-display" class="hidden"></p>
                 </div>
             </div>
         </div>
-    </div>
+
+        <div id="jackpot-section">
+            <h3>Jackpot Mode</h3>
+            <div class="jackpot-toggle-row">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="jackpot-toggle">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span id="jackpot-mode-label">OFF — using SALET (pure info gain)</span>
+            </div>
+            <p class="jackpot-hint">When ON, first guess uses the best answer-pool word instead of SALET. Slightly less optimal for solving speed, but gives a chance to win on turn 1. Previously-seen words are deprioritized.</p>
+        </div>
+
+        <div id="used-words-section">
+            <h3>Word History <span id="used-words-count">0 words tracked</span></h3>
+            <p class="used-words-hint">Track previously-seen answers. Solved words are added automatically. These words are deprioritized in jackpot mode since repeats are rare.</p>
+            <div class="used-words-input-row">
+                <input type="text" id="add-used-word-input" maxlength="5" placeholder="WORD" autocomplete="off" spellcheck="false">
+                <button id="add-used-word-btn" class="btn btn-small">Add</button>
+                <button id="clear-used-words-btn" class="btn btn-small btn-danger">Clear All</button>
+            </div>
+            <div class="bulk-import-row">
+                <textarea id="bulk-import-input" rows="2" placeholder="Bulk import: paste words separated by spaces, commas, or newlines"></textarea>
+                <button id="bulk-import-btn" class="btn btn-small">Import</button>
+            </div>
+            <div id="used-words-list"></div>
+        </div>
 
         <div id="session-stats" class="hidden">
             <h3>Session Stats</h3>
