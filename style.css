@@ -695,6 +695,45 @@ header h1 {
     background: var(--absent);
 }
 
+/* Performance graph */
+#performance-graph {
+    margin-top: 28px;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+}
+
+#performance-graph h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text);
+}
+
+.perf-canvas-wrap {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 8px;
+}
+
+#perf-canvas {
+    display: block;
+    width: 100%;
+}
+
+.perf-all-time {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.perf-all-time strong {
+    color: var(--correct);
+}
+
 /* Responsive */
 @media (max-width: 400px) {
     :root {

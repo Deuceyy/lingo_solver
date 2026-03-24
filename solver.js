@@ -244,6 +244,8 @@ class WordleSolver {
 
         const answerBonus = 0.02;
         const tileBonus = 0.001;
+        // Deprioritize used words in answer selection — they're unlikely repeats
+        const usedPenalty = 0.005;
 
         for (let i = 0; i < candidateWords.length; i++) {
             const word = candidateWords[i];
@@ -253,6 +255,10 @@ class WordleSolver {
 
             if (remainingSet.has(word)) {
                 score += answerBonus;
+                // Deprioritize previously-used answers (unlikely repeats)
+                if (this.usedWords.has(word)) {
+                    score -= usedPenalty;
+                }
             }
 
             const coloredTiles = this.computeExpectedColoredTiles(codes, remainingCodes);
@@ -278,14 +284,12 @@ class WordleSolver {
      */
     _computeBestFirstGuessFromAnswers(remainingCodes, remainingSet, startTime) {
         const n = remainingCodes.length;
-        let bestWord = null;
-        let bestScore = -Infinity;
 
         const answerBonus = 0.02;
         const tileBonus = 0.001;
-        // Used words still in pool but slightly deprioritized for first guess
-        const usedPenalty = 0.005;
 
+        // Score all answer-pool words
+        const scored = [];
         for (let i = 0; i < this.answerWords.length; i++) {
             const word = this.answerWords[i];
             const codes = this.answerCodes[i];
@@ -296,26 +300,33 @@ class WordleSolver {
                 score += answerBonus;
             }
 
-            // Deprioritize previously-used words (unlikely repeats)
-            if (this.usedWords.has(word)) {
-                score -= usedPenalty;
-            }
-
             const coloredTiles = this.computeExpectedColoredTiles(codes, remainingCodes);
             score += coloredTiles * tileBonus;
 
-            if (score > bestScore) {
-                bestScore = score;
-                bestWord = word;
-            }
+            scored.push({ word, score, used: this.usedWords.has(word) });
         }
+
+        // Sort by score descending
+        scored.sort((a, b) => b.score - a.score);
+
+        // Pick from top candidates within 0.05 bits of best (negligible solve-speed difference)
+        const topScore = scored[0].score;
+        const threshold = topScore - 0.05;
+        const topCandidates = scored.filter(s => s.score >= threshold);
+
+        // Filter to unused words if possible (unused = never been an answer before)
+        const unusedCandidates = topCandidates.filter(s => !s.used);
+        const pool = unusedCandidates.length > 0 ? unusedCandidates : topCandidates;
+
+        // Random pick from the pool
+        const pick = pool[Math.floor(Math.random() * pool.length)];
 
         const unusedCount = this.answerWords.filter(w => !this.usedWords.has(w)).length;
         this._lastComputeTime = performance.now() - startTime;
-        this._lastEntropy = bestScore;
+        this._lastEntropy = pick.score;
         this._lastJackpotChance = unusedCount > 0 ? (1 / unusedCount) : (1 / n);
 
-        return bestWord;
+        return pick.word;
     }
 
     applyGuess(word, pattern) {

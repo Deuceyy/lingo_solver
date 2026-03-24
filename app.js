@@ -16,6 +16,9 @@ let jackpotMode = false;
 // Session stats
 let sessionStats = { games: 0, wins: 0, totalGuesses: 0, distribution: {1:0, 2:0, 3:0, 4:0, 5:0, 6:0, fail:0} };
 
+// Persistent game history
+let gameHistory = [];
+
 // Used words (persisted in localStorage)
 let usedWords = [];
 
@@ -43,6 +46,23 @@ function saveUsedWords() {
     }
 }
 
+function loadGameHistory() {
+    try {
+        const stored = localStorage.getItem('wordle-solver-game-history');
+        if (stored) {
+            gameHistory = JSON.parse(stored);
+        }
+    } catch (e) {
+        gameHistory = [];
+    }
+}
+
+function saveGameHistory() {
+    try {
+        localStorage.setItem('wordle-solver-game-history', JSON.stringify(gameHistory));
+    } catch (e) {}
+}
+
 function loadJackpotMode() {
     try {
         const stored = localStorage.getItem('wordle-solver-jackpot-mode');
@@ -64,6 +84,7 @@ async function init() {
     showLoading('Loading word banks...');
     loadUsedWords();
     loadJackpotMode();
+    loadGameHistory();
 
     try {
         const [answersResp, wordsResp] = await Promise.all([
@@ -96,6 +117,7 @@ async function init() {
         hideLoading();
         renderUsedWordsUI();
         renderJackpotToggle();
+        renderPerformanceGraph();
         startNewGame();
     } catch (err) {
         console.error('Failed to load word banks:', err);
@@ -336,6 +358,15 @@ function updateAlgoInfo(entropy, computeTime, jackpotChance) {
     const entropyEl = document.getElementById('entropy-display');
     const timeEl = document.getElementById('computation-time');
     const jackpotEl = document.getElementById('jackpot-display');
+    const firstWordEl = document.getElementById('first-word-display');
+
+    if (firstWordEl && guessNumber === 1) {
+        if (jackpotMode) {
+            firstWordEl.innerHTML = `<strong>First word:</strong> ${currentGuessWord.toUpperCase()} (jackpot pick)`;
+        } else {
+            firstWordEl.innerHTML = `<strong>First word:</strong> SALET (optimal opener)`;
+        }
+    }
 
     if (entropy !== undefined && entropy !== null) {
         entropyEl.innerHTML = `<strong>Entropy:</strong> ${entropy.toFixed(3)} bits`;
@@ -462,7 +493,18 @@ function showSolved(word, numGuesses) {
             `Couldn't solve in 6 guesses. ${rem} words remaining.`;
     }
 
+    // Persist game to history
+    gameHistory.push({
+        date: new Date().toISOString(),
+        word: word || null,
+        guesses: word ? numGuesses : 7, // 7 = fail
+        won: !!word,
+        jackpot: jackpotMode
+    });
+    saveGameHistory();
+
     updateSessionStats();
+    renderPerformanceGraph();
 }
 
 function showError(msg) {
@@ -682,6 +724,125 @@ function updateSessionStats() {
         row.innerHTML = `<span class="dist-label">X</span>` +
             `<div class="dist-bar-track"><div class="dist-bar dist-bar-fail" style="width:${Math.max(8, (failCount / maxCount) * 100)}%">${failCount}</div></div>`;
         distEl.appendChild(row);
+    }
+}
+
+// ── Performance graph ────────────────────────────────────────────────────────
+
+function renderPerformanceGraph() {
+    const container = document.getElementById('performance-graph');
+    if (!container) return;
+
+    const wins = gameHistory.filter(g => g.won);
+    if (wins.length < 2) {
+        container.classList.add('hidden');
+        return;
+    }
+    container.classList.remove('hidden');
+
+    const canvas = document.getElementById('perf-canvas');
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+
+    const cssWidth = canvas.parentElement.clientWidth || 500;
+    const cssHeight = 180;
+    canvas.style.width = cssWidth + 'px';
+    canvas.style.height = cssHeight + 'px';
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    // Compute rolling average (window of 10 games)
+    const windowSize = Math.min(10, Math.max(3, Math.floor(wins.length / 3)));
+    const rollingAvg = [];
+    for (let i = 0; i < wins.length; i++) {
+        const start = Math.max(0, i - windowSize + 1);
+        const slice = wins.slice(start, i + 1);
+        const avg = slice.reduce((sum, g) => sum + g.guesses, 0) / slice.length;
+        rollingAvg.push(avg);
+    }
+
+    // Chart dimensions
+    const padLeft = 32;
+    const padRight = 12;
+    const padTop = 20;
+    const padBottom = 28;
+    const chartW = cssWidth - padLeft - padRight;
+    const chartH = cssHeight - padTop - padBottom;
+
+    const minY = 1;
+    const maxY = 6;
+    const yRange = maxY - minY;
+
+    function xPos(i) { return padLeft + (i / (wins.length - 1)) * chartW; }
+    function yPos(v) { return padTop + ((maxY - v) / yRange) * chartH; }
+
+    // Grid lines
+    ctx.strokeStyle = '#3a3a3c';
+    ctx.lineWidth = 0.5;
+    for (let y = 1; y <= 6; y++) {
+        ctx.beginPath();
+        ctx.moveTo(padLeft, yPos(y));
+        ctx.lineTo(padLeft + chartW, yPos(y));
+        ctx.stroke();
+    }
+
+    // Y-axis labels
+    ctx.fillStyle = '#818384';
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    for (let y = 1; y <= 6; y++) {
+        ctx.fillText(y.toString(), padLeft - 6, yPos(y) + 4);
+    }
+
+    // Individual game dots
+    ctx.fillStyle = 'rgba(83, 141, 78, 0.4)';
+    for (let i = 0; i < wins.length; i++) {
+        ctx.beginPath();
+        ctx.arc(xPos(i), yPos(wins[i].guesses), 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Rolling average line
+    ctx.strokeStyle = '#538d4e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < rollingAvg.length; i++) {
+        const x = xPos(i);
+        const y = yPos(rollingAvg[i]);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Current average label
+    const currentAvg = rollingAvg[rollingAvg.length - 1];
+    ctx.fillStyle = '#538d4e';
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    const lastX = xPos(wins.length - 1);
+    const lastY = yPos(currentAvg);
+    ctx.fillText(currentAvg.toFixed(2), Math.min(lastX + 6, cssWidth - 40), lastY + 4);
+
+    // X-axis label
+    ctx.fillStyle = '#818384';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${wins.length} games`, padLeft + chartW / 2, cssHeight - 4);
+
+    // All-time stats
+    const allTimeAvg = wins.reduce((s, g) => s + g.guesses, 0) / wins.length;
+    const totalGames = gameHistory.length;
+    const totalWins = wins.length;
+
+    const statsEl = document.getElementById('perf-all-time');
+    if (statsEl) {
+        statsEl.innerHTML =
+            `<span>All-time: <strong>${allTimeAvg.toFixed(2)}</strong> avg</span>` +
+            `<span>${totalWins}/${totalGames} won</span>` +
+            `<span>Rolling ${windowSize}-game avg: <strong>${currentAvg.toFixed(2)}</strong></span>`;
     }
 }
 
