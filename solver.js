@@ -217,18 +217,15 @@ class WordleSolver {
         let candidateWords;
         let candidateCodes;
 
-        if (n <= 3) {
-            // Tiny pool: just try remaining answers
+        if (n === 2) {
+            // With 2 left, just guess one (50/50 either way)
             candidateWords = remaining;
             candidateCodes = remainingCodes;
-        } else if (n <= 300) {
-            // Small/medium pool: use full guess vocabulary for best splits
+        } else {
+            // Always use full guess vocabulary for best entropy splits.
+            // Even with 3 remaining, a non-answer word may distinguish all 3.
             candidateWords = this.allGuessWords;
             candidateCodes = this.guessCodes;
-        } else {
-            // Large pool: use answer words for speed (still excellent results)
-            candidateWords = this.answerWords;
-            candidateCodes = this.answerCodes;
         }
 
         let bestWord = null;

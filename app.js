@@ -10,6 +10,7 @@ let isComputing = false;
 let allRemainingWords = [];
 let totalRemaining = 0;
 let answerSet = new Set();
+let knownGreens = [null, null, null, null, null]; // confirmed green letters per position
 
 const PATTERN_CLASSES = ['absent', 'present', 'correct'];
 const PATTERN_LABELS = ['absent', 'misplaced', 'correct'];
@@ -80,6 +81,7 @@ async function initMainThread(answers, allWords) {
 function startNewGame() {
     guessNumber = 1;
     currentPattern = [0, 0, 0, 0, 0];
+    knownGreens = [null, null, null, null, null];
 
     document.getElementById('history').innerHTML = '';
     document.getElementById('solved-message').classList.add('hidden');
@@ -124,7 +126,6 @@ function requestBestGuess() {
             totalRemaining = remaining;
             allRemainingWords = remainingWords;
             currentGuessWord = guess;
-            currentPattern = [0, 0, 0, 0, 0];
 
             renderCurrentRow(guess);
             updateGuessLabel();
@@ -149,7 +150,6 @@ function requestBestGuessMainThread() {
     totalRemaining = mainThreadSolver.remainingAnswers.length;
     allRemainingWords = mainThreadSolver.remainingAnswers.slice(0, 100);
     currentGuessWord = guess;
-    currentPattern = [0, 0, 0, 0, 0];
 
     renderCurrentRow(guess);
     updateGuessLabel();
@@ -166,11 +166,20 @@ function renderCurrentRow(word) {
 
     for (let i = 0; i < 5; i++) {
         const tile = document.createElement('div');
-        tile.className = 'tile absent';
+        // Auto-set green if this letter matches a known green at this position
+        const isKnownGreen = knownGreens[i] !== null && word[i] === knownGreens[i];
+        if (isKnownGreen) {
+            tile.className = 'tile correct';
+            currentPattern[i] = 2;
+        } else {
+            tile.className = 'tile absent';
+            currentPattern[i] = 0;
+        }
         tile.textContent = word[i];
         tile.dataset.index = i;
         tile.setAttribute('role', 'button');
-        tile.setAttribute('aria-label', `Letter ${word[i].toUpperCase()}, position ${i + 1}: absent. Click to change.`);
+        const status = isKnownGreen ? 'correct' : 'absent';
+        tile.setAttribute('aria-label', `Letter ${word[i].toUpperCase()}, position ${i + 1}: ${status}. Click to change.`);
         tile.addEventListener('click', () => toggleTile(i));
         row.appendChild(tile);
     }
@@ -280,8 +289,7 @@ function useCustomGuess(word) {
     if (word.length !== 5) return;
 
     currentGuessWord = word.toLowerCase();
-    currentPattern = [0, 0, 0, 0, 0];
-    renderCurrentRow(currentGuessWord);
+    renderCurrentRow(currentGuessWord); // renderCurrentRow handles knownGreens and resets currentPattern
 }
 
 function handleManualInput(e) {
@@ -302,6 +310,13 @@ function submitFeedback() {
     const allCorrect = currentPattern.every(p => p === 2);
 
     addToHistory(currentGuessWord, currentPattern);
+
+    // Record confirmed green letters for auto-highlighting next guess
+    for (let i = 0; i < 5; i++) {
+        if (currentPattern[i] === 2) {
+            knownGreens[i] = currentGuessWord[i];
+        }
+    }
 
     if (worker) {
         worker.postMessage({ type: 'applyGuess', data: { word: currentGuessWord, pattern: currentPattern } });
