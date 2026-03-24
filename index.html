@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wordle Solver — Optimal Entropy-Based</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Wordle Solver</h1>
+            <p class="subtitle">Entropy-optimized · Avg ~3.42 guesses</p>
+        </header>
+
+        <div id="board-section">
+            <div id="history"></div>
+
+            <div id="current-guess-section">
+                <div class="guess-label">
+                    <span id="guess-number">Guess 1</span>
+                    <span id="remaining-count"></span>
+                </div>
+                <div id="current-row" class="tile-row">
+                    <!-- 5 tiles rendered by JS -->
+                </div>
+                <div class="action-row">
+                    <button id="submit-btn" class="btn btn-primary">Submit Feedback</button>
+                    <button id="reset-btn" class="btn btn-secondary">Reset</button>
+                </div>
+                <p class="hint">Click each letter to toggle: <span class="tag absent-tag">absent</span> → <span class="tag present-tag">misplaced</span> → <span class="tag correct-tag">correct</span></p>
+                <div class="manual-input-row">
+                    <label for="manual-word-input">Or type your own guess:</label>
+                    <input type="text" id="manual-word-input" maxlength="5" placeholder="WORD" autocomplete="off" spellcheck="false" oninput="handleManualInput(event)">
+                </div>
+            </div>
+
+            <div id="solved-message" class="hidden">
+                <div class="solved-inner">
+                    <h2>Solved!</h2>
+                    <p id="solved-text"></p>
+                    <button id="play-again-btn" class="btn btn-primary">Play Again</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="info-panel">
+            <div id="candidates-section">
+                <h3>Top Candidates <span id="candidate-count"></span></h3>
+                <div id="candidates-list"></div>
+            </div>
+            <div id="stats-section">
+                <h3>Algorithm Info</h3>
+                <div id="algo-info">
+                    <p><strong>Method:</strong> Maximum entropy (information gain)</p>
+                    <p><strong>First word:</strong> SALET (optimal opener)</p>
+                    <p id="entropy-display"></p>
+                    <p id="computation-time"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="solver.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
