@@ -254,9 +254,9 @@ class WordleSolver {
                 return this._computeBestFirstGuessFromAnswers(remainingCodes, remainingSet, startTime);
             }
             this._lastComputeTime = 0;
-            this._lastEntropy = 5.89;
+            this._lastEntropy = 5.86;
             this._lastJackpotChance = 0;
-            return 'salet';
+            return 'slate';
         }
 
         let candidateWords;
@@ -272,15 +272,17 @@ class WordleSolver {
 
         // Adaptive bonuses — tile optimization matters more as pool shrinks
         // (when pool is small, many words have similar entropy)
+        // Green bonus is aggressive because 55%+ of competitive matches are decided
+        // by green tile count as tiebreaker when attempts are equal.
         const answerBonus = n <= 20 ? 0.08 : 0.04;   // strongly prefer answer-pool words
-        const greenBonus  = n <= 20 ? 0.015 : 0.008;  // greens = first tiebreaker
-        const orangeBonus = n <= 20 ? 0.005 : 0.003;  // oranges = second tiebreaker
+        const greenBonus  = n <= 20 ? 0.12 : 0.06;   // greens = first tiebreaker (critical)
+        const orangeBonus = n <= 20 ? 0.04 : 0.02;   // oranges = second tiebreaker
         const freqBonus = 0.003;
 
         // Bonus for preserving confirmed green positions in the guess
         // This ensures we don't "waste" known greens by picking words without them
         const confirmedGreens = this._getConfirmedGreens();
-        const greenPreserveBonus = 0.02;
+        const greenPreserveBonus = 0.06;
 
         let bestWord = null;
         let bestScore = -Infinity;
@@ -335,8 +337,8 @@ class WordleSolver {
         const n = remainingCodes.length;
 
         const answerBonus = 0.04;
-        const greenBonus = 0.008;
-        const orangeBonus = 0.003;
+        const greenBonus = 0.06;
+        const orangeBonus = 0.02;
         const freqBonus = 0.003;
 
         // Score all answer-pool words
