@@ -16,6 +16,11 @@ let jackpotMode = false;
 // Session stats
 let sessionStats = { games: 0, wins: 0, totalGuesses: 0, distribution: {1:0, 2:0, 3:0, 4:0, 5:0, 6:0, fail:0} };
 
+const SOLVER_VERSION = '2.0.0';
+
+// Current game's guess log (for detailed export)
+let currentGameGuesses = [];
+
 // Persistent game history
 let gameHistory = [];
 
@@ -180,6 +185,7 @@ function startNewGame() {
     guessNumber = 1;
     currentPattern = [0, 0, 0, 0, 0];
     knownGreens = [null, null, null, null, null];
+    currentGameGuesses = [];
 
     document.getElementById('history').innerHTML = '';
     document.getElementById('solved-message').classList.add('hidden');
@@ -297,6 +303,11 @@ function toggleTile(index) {
 }
 
 function addToHistory(word, pattern) {
+    // Track for export
+    const greens = pattern.filter(p => p === 2).length;
+    const oranges = pattern.filter(p => p === 1).length;
+    currentGameGuesses.push({ word, pattern: [...pattern], greens, oranges });
+
     const history = document.getElementById('history');
     const row = document.createElement('div');
     row.className = 'tile-row';
@@ -498,27 +509,51 @@ function showSolved(word, numGuesses) {
         sessionStats.wins++;
         sessionStats.totalGuesses += numGuesses;
         sessionStats.distribution[numGuesses] = (sessionStats.distribution[numGuesses] || 0) + 1;
-        document.getElementById('solved-text').textContent =
-            `Found "${word.toUpperCase()}" in ${numGuesses} guess${numGuesses !== 1 ? 'es' : ''}!`;
 
         // Auto-add solved word to used words list
         addUsedWord(word.toLowerCase());
     } else {
         sessionStats.distribution.fail++;
-        const rem = worker ? totalRemaining : mainThreadSolver.remainingAnswers.length;
-        document.getElementById('solved-text').textContent =
-            `Couldn't solve in 6 guesses. ${rem} words remaining.`;
     }
 
-    // Persist game to history
-    gameHistory.push({
+    // Compute our tile totals from guess log
+    const myGreens = currentGameGuesses.reduce((s, g) => s + g.greens, 0);
+    const myOranges = currentGameGuesses.reduce((s, g) => s + g.oranges, 0);
+
+    // Persist game to history (match result added later via Save Result button)
+    const gameEntry = {
         date: new Date().toISOString(),
         word: word || null,
-        guesses: word ? numGuesses : 7, // 7 = fail
+        guesses: word ? numGuesses : 7,
         won: !!word,
-        jackpot: jackpotMode
-    });
+        jackpot: jackpotMode,
+        solverVersion: SOLVER_VERSION,
+        myGreens,
+        myOranges,
+        guessLog: currentGameGuesses.map(g => ({ word: g.word, pattern: g.pattern })),
+        matchResult: null // filled by Save Result
+    };
+    gameHistory.push(gameEntry);
     saveGameHistory();
+
+    // Show tile totals in solved text
+    if (word) {
+        document.getElementById('solved-text').textContent =
+            `Found "${word.toUpperCase()}" in ${numGuesses} guess${numGuesses !== 1 ? 'es' : ''}! (${myGreens} green, ${myOranges} orange tiles)`;
+    } else {
+        const rem = worker ? totalRemaining : mainThreadSolver.remainingAnswers.length;
+        document.getElementById('solved-text').textContent =
+            `Couldn't solve in 6 guesses. ${rem} words remaining. (${myGreens} green, ${myOranges} orange tiles)`;
+    }
+
+    // Show match result form and reset fields
+    const matchSection = document.getElementById('match-result-section');
+    if (matchSection) {
+        matchSection.classList.remove('hidden');
+        document.getElementById('match-outcome').value = '';
+        document.getElementById('opponent-fields').classList.add('hidden');
+        document.getElementById('result-saved-msg').classList.add('hidden');
+    }
 
     updateSessionStats();
     renderPerformanceGraph();
@@ -906,6 +941,40 @@ document.addEventListener('DOMContentLoaded', () => {
         clearBtn.addEventListener('click', clearUsedWords);
     }
 
+    // Match outcome toggle — show opponent fields for win/loss/draw
+    const matchOutcome = document.getElementById('match-outcome');
+    if (matchOutcome) {
+        matchOutcome.addEventListener('change', () => {
+            const val = matchOutcome.value;
+            const oppFields = document.getElementById('opponent-fields');
+            if (val === 'win' || val === 'loss' || val === 'draw') {
+                oppFields.classList.remove('hidden');
+            } else {
+                oppFields.classList.add('hidden');
+            }
+        });
+    }
+
+    // Save match result
+    const saveResultBtn = document.getElementById('save-result-btn');
+    if (saveResultBtn) {
+        saveResultBtn.addEventListener('click', saveMatchResult);
+    }
+
+    // Export buttons
+    const exportJsonBtn = document.getElementById('export-json-btn');
+    if (exportJsonBtn) exportJsonBtn.addEventListener('click', exportJSON);
+
+    const exportCsvBtn = document.getElementById('export-csv-btn');
+    if (exportCsvBtn) exportCsvBtn.addEventListener('click', exportCSV);
+
+    const copyLogBtn = document.getElementById('copy-log-btn');
+    if (copyLogBtn) copyLogBtn.addEventListener('click', copyLogToClipboard);
+
+    // Set version display
+    const versionEl = document.getElementById('version-display');
+    if (versionEl) versionEl.textContent = `Lingo Solver v${SOLVER_VERSION}`;
+
     // Keyboard shortcut: Enter to submit
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !document.getElementById('current-guess-section').classList.contains('hidden')) {
@@ -921,3 +990,105 @@ document.addEventListener('DOMContentLoaded', () => {
 
     init();
 });
+
+// ── Match result reporting ──────────────────────────────────────────────────
+
+function saveMatchResult() {
+    const outcome = document.getElementById('match-outcome').value;
+    if (!outcome) return;
+
+    const lastGame = gameHistory[gameHistory.length - 1];
+    if (!lastGame) return;
+
+    const result = { outcome };
+
+    if (outcome !== 'solo') {
+        const oppAttempts = document.getElementById('opp-attempts').value;
+        const oppGreens = document.getElementById('opp-greens').value;
+        const oppOranges = document.getElementById('opp-oranges').value;
+        const oppName = document.getElementById('opp-name').value.trim();
+        const lossReason = document.getElementById('loss-reason').value;
+
+        if (oppAttempts) result.oppAttempts = parseInt(oppAttempts);
+        if (oppGreens) result.oppGreens = parseInt(oppGreens);
+        if (oppOranges) result.oppOranges = parseInt(oppOranges);
+        if (oppName) result.opponent = oppName;
+        if (lossReason) result.lossReason = lossReason;
+    }
+
+    lastGame.matchResult = result;
+    saveGameHistory();
+
+    document.getElementById('result-saved-msg').classList.remove('hidden');
+    setTimeout(() => {
+        document.getElementById('result-saved-msg').classList.add('hidden');
+    }, 2000);
+}
+
+// ── Export functions ─────────────────────────────────────────────────────────
+
+function exportJSON() {
+    const data = {
+        exportDate: new Date().toISOString(),
+        solverVersion: SOLVER_VERSION,
+        totalGames: gameHistory.length,
+        games: gameHistory
+    };
+    downloadFile(JSON.stringify(data, null, 2), `lingo-solver-log-${dateStamp()}.json`, 'application/json');
+    showExportStatus('JSON exported!');
+}
+
+function exportCSV() {
+    const headers = ['date', 'word', 'guesses', 'won', 'my_greens', 'my_oranges', 'match_outcome', 'opp_attempts', 'opp_greens', 'opp_oranges', 'opponent', 'loss_reason', 'solver_version', 'guess_log'];
+    const rows = gameHistory.map(g => {
+        const m = g.matchResult || {};
+        return [
+            g.date, g.word || '', g.guesses, g.won ? 1 : 0,
+            g.myGreens ?? '', g.myOranges ?? '',
+            m.outcome || '', m.oppAttempts ?? '', m.oppGreens ?? '', m.oppOranges ?? '',
+            m.opponent || '', m.lossReason || '',
+            g.solverVersion || '',
+            (g.guessLog || []).map(gl => gl.word + ':' + gl.pattern.join('')).join(';')
+        ].map(v => `"${v}"`).join(',');
+    });
+    const csv = [headers.join(','), ...rows].join('\n');
+    downloadFile(csv, `lingo-solver-log-${dateStamp()}.csv`, 'text/csv');
+    showExportStatus('CSV exported!');
+}
+
+function copyLogToClipboard() {
+    const data = {
+        exportDate: new Date().toISOString(),
+        solverVersion: SOLVER_VERSION,
+        totalGames: gameHistory.length,
+        games: gameHistory
+    };
+    navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => {
+        showExportStatus('Copied to clipboard!');
+    }).catch(() => {
+        showExportStatus('Copy failed — try Export JSON instead.');
+    });
+}
+
+function downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function dateStamp() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function showExportStatus(msg) {
+    const el = document.getElementById('export-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    el.style.color = 'var(--correct)';
+    setTimeout(() => el.classList.add('hidden'), 2500);
+}

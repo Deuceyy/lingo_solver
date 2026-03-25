@@ -40,6 +40,36 @@
                 <div class="solved-inner">
                     <h2>Solved!</h2>
                     <p id="solved-text"></p>
+                    <div id="match-result-section" class="match-result-section">
+                        <h4>Report Match Result</h4>
+                        <div class="match-result-row">
+                            <label>Result:</label>
+                            <select id="match-outcome">
+                                <option value="">— select —</option>
+                                <option value="win">Win</option>
+                                <option value="loss">Loss</option>
+                                <option value="draw">Draw</option>
+                                <option value="solo">Solo (no opponent)</option>
+                            </select>
+                        </div>
+                        <div id="opponent-fields" class="match-result-row opponent-fields hidden">
+                            <div class="opp-field"><label>Opp Attempts</label><input type="number" id="opp-attempts" min="1" max="6" placeholder="3"></div>
+                            <div class="opp-field"><label>Opp Greens</label><input type="number" id="opp-greens" min="0" max="30" placeholder="7"></div>
+                            <div class="opp-field"><label>Opp Oranges</label><input type="number" id="opp-oranges" min="0" max="30" placeholder="0"></div>
+                            <div class="opp-field"><label>Opponent</label><input type="text" id="opp-name" placeholder="THECATBURGLAR"></div>
+                            <div class="opp-field"><label>Loss reason</label>
+                                <select id="loss-reason">
+                                    <option value="">— select —</option>
+                                    <option value="fewer_attempts">Fewer attempts</option>
+                                    <option value="more_greens">More green tiles</option>
+                                    <option value="more_oranges">More orange tiles</option>
+                                    <option value="faster_time">Faster time</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button id="save-result-btn" class="btn btn-small">Save Result</button>
+                        <span id="result-saved-msg" class="hidden" style="color:var(--correct);margin-left:8px;">Saved!</span>
+                    </div>
                     <button id="play-again-btn" class="btn btn-primary">Play Again</button>
                 </div>
             </div>
@@ -53,7 +83,7 @@
             <div id="stats-section">
                 <h3>Algorithm Info</h3>
                 <div id="algo-info">
-                    <p><strong>Method:</strong> Maximum entropy (information gain)</p>
+                    <p><strong>Method:</strong> Entropy + tile-optimized tiebreaking</p>
                     <p id="first-word-display"><strong>First word:</strong> SALET (optimal opener)</p>
                     <p id="entropy-display"></p>
                     <p id="computation-time"></p>
@@ -76,7 +106,7 @@
 
         <div id="used-words-section">
             <h3>Word History <span id="used-words-count">0 words tracked</span></h3>
-            <p class="used-words-hint">Track previously-seen answers. Solved words are added automatically. These words are deprioritized in all guesses since repeats are rare.</p>
+            <p class="used-words-hint">Track previously-seen answers. Solved words are added automatically. These get a slight boost since the game sometimes repeats words.</p>
             <div class="used-words-input-row">
                 <input type="text" id="add-used-word-input" maxlength="5" placeholder="WORD" autocomplete="off" spellcheck="false">
                 <button id="add-used-word-btn" class="btn btn-small">Add</button>
@@ -115,6 +145,21 @@
             </div>
             <div id="stat-distribution"></div>
         </div>
+
+        <div id="export-section">
+            <h3>Game Log</h3>
+            <p class="export-hint">Export game history for analysis. Saves all guesses, patterns, match results, and opponent data.</p>
+            <div class="export-row">
+                <button id="export-json-btn" class="btn btn-small">Export JSON</button>
+                <button id="export-csv-btn" class="btn btn-small">Export CSV</button>
+                <button id="copy-log-btn" class="btn btn-small">Copy to Clipboard</button>
+            </div>
+            <p id="export-status" class="hidden"></p>
+        </div>
+
+        <footer class="version-footer">
+            <span id="version-display">Lingo Solver v2.0.0</span>
+        </footer>
     </div>
 
     <script src="solver.js"></script>

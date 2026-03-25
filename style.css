@@ -734,6 +734,119 @@ header h1 {
     color: var(--correct);
 }
 
+/* Match result reporting */
+.match-result-section {
+    margin: 16px 0;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-align: left;
+}
+
+.match-result-section h4 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--text-dim);
+}
+
+.match-result-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.match-result-row label {
+    font-size: 12px;
+    color: var(--text-dim);
+    min-width: 50px;
+}
+
+.match-result-row select,
+.match-result-row input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    outline: none;
+}
+
+.match-result-row select:focus,
+.match-result-row input:focus {
+    border-color: var(--correct);
+}
+
+.opponent-fields {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.opp-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.opp-field label {
+    font-size: 10px;
+    color: var(--text-dim);
+    min-width: unset;
+}
+
+.opp-field input,
+.opp-field select {
+    width: 100px;
+}
+
+.opp-field input[type="number"] {
+    width: 60px;
+}
+
+/* Export section */
+#export-section {
+    margin-top: 28px;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+}
+
+#export-section h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: var(--text);
+}
+
+.export-hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    opacity: 0.7;
+    line-height: 1.4;
+    margin-bottom: 12px;
+}
+
+.export-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* Version footer */
+.version-footer {
+    margin-top: 32px;
+    padding: 16px 0;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-dim);
+    opacity: 0.5;
+}
+
 /* Responsive */
 @media (max-width: 400px) {
     :root {
