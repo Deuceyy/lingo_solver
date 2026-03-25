@@ -17,6 +17,27 @@ self.onmessage = function(e) {
             break;
         }
 
+        case 'setJackpotMode': {
+            solver.jackpotMode = data.enabled;
+            self.postMessage({ type: 'jackpotModeSet' });
+            break;
+        }
+
+        case 'setUsedWords': {
+            // Legacy support — convert flat list to frequency map
+            const freqMap = {};
+            data.words.forEach(w => { freqMap[w] = (freqMap[w] || 0) + 1; });
+            solver.setWordFrequencies(freqMap);
+            self.postMessage({ type: 'usedWordsSet', data: { poolSize: solver.answerWords.length } });
+            break;
+        }
+
+        case 'setWordFrequencies': {
+            solver.setWordFrequencies(data.freqMap);
+            self.postMessage({ type: 'wordFrequenciesSet' });
+            break;
+        }
+
         case 'getBestGuess': {
             const guess = solver.getBestGuess();
             self.postMessage({
@@ -26,7 +47,8 @@ self.onmessage = function(e) {
                     remaining: solver.remainingAnswers.length,
                     remainingWords: solver.remainingAnswers.slice(0, 100),
                     entropy: solver._lastEntropy,
-                    computeTime: solver._lastComputeTime
+                    computeTime: solver._lastComputeTime,
+                    jackpotChance: solver._lastJackpotChance
                 }
             });
             break;

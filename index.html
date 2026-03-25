@@ -10,7 +10,7 @@
     <div id="app">
         <header>
             <h1>Wordle Solver</h1>
-            <p class="subtitle">Entropy-optimized · Avg ~3.42 guesses</p>
+            <p class="subtitle">Entropy-optimized · Competition mode</p>
         </header>
 
         <div id="board-section">
@@ -26,6 +26,7 @@
                 </div>
                 <div class="action-row">
                     <button id="submit-btn" class="btn btn-primary">Submit Feedback</button>
+                    <button id="solved-btn" class="btn btn-solved">Solved!</button>
                     <button id="reset-btn" class="btn btn-secondary">Reset</button>
                 </div>
                 <p class="hint">Click each letter to toggle: <span class="tag absent-tag">absent</span> → <span class="tag present-tag">misplaced</span> → <span class="tag correct-tag">correct</span></p>
@@ -39,6 +40,21 @@
                 <div class="solved-inner">
                     <h2>Solved!</h2>
                     <p id="solved-text"></p>
+                    <div id="match-result-section" class="match-result-section">
+                        <h4>Report Match Result</h4>
+                        <div class="match-result-row opponent-fields">
+                            <div class="opp-field"><label>Opp Attempts</label><input type="number" id="opp-attempts" min="1" max="7" placeholder="3"></div>
+                            <div class="opp-field"><label>Opp Greens</label><input type="number" id="opp-greens" min="0" max="30" placeholder="7"></div>
+                            <div class="opp-field"><label>Opp Oranges</label><input type="number" id="opp-oranges" min="0" max="30" placeholder="0"></div>
+                            <div class="opp-field"><label>Opponent</label><input type="text" id="opp-name" placeholder="THECATBURGLAR"></div>
+                        </div>
+                        <div class="match-result-row">
+                            <button id="save-result-btn" class="btn btn-small">Save Result</button>
+                            <button id="save-solo-btn" class="btn btn-small">Solo (no opponent)</button>
+                            <span id="result-saved-msg" class="hidden" style="color:var(--correct);margin-left:8px;">Saved!</span>
+                            <span id="auto-outcome-display" class="hidden" style="margin-left:8px;font-weight:bold;"></span>
+                        </div>
+                    </div>
                     <button id="play-again-btn" class="btn btn-primary">Play Again</button>
                 </div>
             </div>
@@ -52,13 +68,92 @@
             <div id="stats-section">
                 <h3>Algorithm Info</h3>
                 <div id="algo-info">
-                    <p><strong>Method:</strong> Maximum entropy (information gain)</p>
-                    <p><strong>First word:</strong> SALET (optimal opener)</p>
+                    <p><strong>Method:</strong> H2H frontier: answer-only candidates + green/orange rerank</p>
+                    <p id="first-word-display"><strong>First word:</strong> SLATE (optimal H2H opener)</p>
                     <p id="entropy-display"></p>
                     <p id="computation-time"></p>
+                    <p id="jackpot-display" class="hidden"></p>
                 </div>
             </div>
         </div>
+
+        <div id="jackpot-section">
+            <h3>Jackpot Mode</h3>
+            <div class="jackpot-toggle-row">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="jackpot-toggle">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span id="jackpot-mode-label">OFF — using SALET (pure info gain)</span>
+            </div>
+            <p class="jackpot-hint">When ON, first guess is randomly chosen from top answer-pool words each game. Covers more of the answer space over time for better jackpot odds. Previously-seen words are avoided.</p>
+        </div>
+
+        <div id="used-words-section">
+            <h3>Word History <span id="used-words-count">0 words tracked</span></h3>
+            <p class="used-words-hint">Track previously-seen answers. Solved words are added automatically. These get a slight boost since the game sometimes repeats words.</p>
+            <div class="used-words-input-row">
+                <input type="text" id="add-used-word-input" maxlength="5" placeholder="WORD" autocomplete="off" spellcheck="false">
+                <button id="add-used-word-btn" class="btn btn-small">Add</button>
+                <button id="clear-used-words-btn" class="btn btn-small btn-danger">Clear All</button>
+            </div>
+            <div class="bulk-import-row">
+                <textarea id="bulk-import-input" rows="2" placeholder="Bulk import: paste words separated by spaces, commas, or newlines"></textarea>
+                <button id="bulk-import-btn" class="btn btn-small">Import</button>
+            </div>
+            <div id="used-words-list"></div>
+        </div>
+
+        <div id="performance-graph" class="hidden">
+            <h3>Performance Over Time</h3>
+            <div class="perf-canvas-wrap">
+                <canvas id="perf-canvas"></canvas>
+            </div>
+            <div id="perf-all-time" class="perf-all-time"></div>
+        </div>
+
+        <div id="session-stats" class="hidden">
+            <h3>Session Stats</h3>
+            <div class="stats-summary">
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-played">0</div>
+                    <div class="stat-label">Played</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-h2h-record">-</div>
+                    <div class="stat-label">H2H Record</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-win-pct">-</div>
+                    <div class="stat-label">H2H Win%</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-pnl">$0.00</div>
+                    <div class="stat-label">Session P&L</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-avg">-</div>
+                    <div class="stat-label">Avg Guesses</div>
+                </div>
+            </div>
+            <div id="stat-distribution"></div>
+        </div>
+
+        <div id="export-section">
+            <h3>Game Log</h3>
+            <p class="export-hint">Export game history for analysis. Saves all guesses, patterns, match results, and opponent data.</p>
+            <div class="export-row">
+                <button id="export-json-btn" class="btn btn-small">Export JSON</button>
+                <button id="export-csv-btn" class="btn btn-small">Export CSV</button>
+                <button id="copy-log-btn" class="btn btn-small">Copy All</button>
+                <button id="copy-session-btn" class="btn btn-small">Copy Session</button>
+            </div>
+            <p id="export-status" class="hidden"></p>
+        </div>
+
+        <footer class="version-footer">
+            <span id="version-display">Lingo Solver v3.1.0</span>
+        </footer>
     </div>
 
     <script src="solver.js"></script>
