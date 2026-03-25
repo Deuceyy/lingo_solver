@@ -16,7 +16,12 @@ let jackpotMode = false;
 // Session stats
 let sessionStats = { games: 0, wins: 0, totalGuesses: 0, distribution: {1:0, 2:0, 3:0, 4:0, 5:0, 6:0, fail:0} };
 
-const SOLVER_VERSION = '3.0.0';
+// H2H session tracking
+const ENTRY_COST = 2.10;
+const WIN_PAYOUT = 4.10;
+let h2hStats = { wins: 0, losses: 0, draws: 0, solos: 0, pnl: 0 };
+
+const SOLVER_VERSION = '3.1.0';
 
 // Current game's guess log (for detailed export)
 let currentGameGuesses = [];
@@ -770,11 +775,28 @@ function updateSessionStats() {
 
     el.classList.remove('hidden');
     const avg = wins > 0 ? (totalGuesses / wins).toFixed(2) : '-';
-    const winPct = Math.round((wins / games) * 100);
+
+    // H2H win% (exclude solos and games with no match result yet)
+    const h2hTotal = h2hStats.wins + h2hStats.losses + h2hStats.draws;
+    const h2hWinPct = h2hTotal > 0 ? Math.round((h2hStats.wins / h2hTotal) * 100) : '-';
+    const pnlStr = h2hStats.pnl >= 0
+        ? `+$${h2hStats.pnl.toFixed(2)}`
+        : `-$${Math.abs(h2hStats.pnl).toFixed(2)}`;
+    const pnlColor = h2hStats.pnl >= 0 ? 'var(--correct)' : '#e74c3c';
 
     document.getElementById('stat-played').textContent = games;
-    document.getElementById('stat-win-pct').textContent = winPct + '%';
+    document.getElementById('stat-win-pct').textContent = h2hTotal > 0 ? h2hWinPct + '%' : '-';
     document.getElementById('stat-avg').textContent = avg;
+
+    // Update H2H record and P&L
+    const h2hRecordEl = document.getElementById('stat-h2h-record');
+    if (h2hRecordEl) h2hRecordEl.textContent = `${h2hStats.wins}W-${h2hStats.losses}L` + (h2hStats.draws > 0 ? `-${h2hStats.draws}D` : '');
+
+    const pnlEl = document.getElementById('stat-pnl');
+    if (pnlEl) {
+        pnlEl.textContent = pnlStr;
+        pnlEl.style.color = pnlColor;
+    }
 
     const distEl = document.getElementById('stat-distribution');
     distEl.innerHTML = '';
@@ -804,8 +826,9 @@ function renderPerformanceGraph() {
     const container = document.getElementById('performance-graph');
     if (!container) return;
 
-    const wins = gameHistory.filter(g => g.won);
-    if (wins.length < 2) {
+    // Only show H2H matched games (not solo)
+    const matchedGames = gameHistory.filter(g => g.matchResult && g.matchResult.outcome !== 'solo');
+    if (matchedGames.length < 2) {
         container.classList.add('hidden');
         return;
     }
@@ -825,95 +848,118 @@ function renderPerformanceGraph() {
 
     ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    // Compute rolling average (window of 10 games)
-    const windowSize = Math.min(10, Math.max(3, Math.floor(wins.length / 3)));
-    const rollingAvg = [];
-    for (let i = 0; i < wins.length; i++) {
+    // Compute cumulative H2H win rate and rolling win rate
+    const windowSize = Math.min(10, Math.max(3, Math.floor(matchedGames.length / 3)));
+    let cumWins = 0;
+    const cumWinRate = [];
+    const rollingWinRate = [];
+    const outcomes = []; // 1=win, 0=loss, 0.5=draw
+
+    for (let i = 0; i < matchedGames.length; i++) {
+        const o = matchedGames[i].matchResult.outcome;
+        const val = o === 'win' ? 1 : o === 'draw' ? 0.5 : 0;
+        outcomes.push(val);
+        cumWins += val;
+        cumWinRate.push(cumWins / (i + 1));
+
         const start = Math.max(0, i - windowSize + 1);
-        const slice = wins.slice(start, i + 1);
-        const avg = slice.reduce((sum, g) => sum + g.guesses, 0) / slice.length;
-        rollingAvg.push(avg);
+        const slice = outcomes.slice(start, i + 1);
+        const avg = slice.reduce((s, v) => s + v, 0) / slice.length;
+        rollingWinRate.push(avg);
     }
 
     // Chart dimensions
-    const padLeft = 32;
+    const padLeft = 38;
     const padRight = 12;
     const padTop = 20;
     const padBottom = 28;
     const chartW = cssWidth - padLeft - padRight;
     const chartH = cssHeight - padTop - padBottom;
 
-    const minY = 1;
-    const maxY = 6;
-    const yRange = maxY - minY;
+    const minY = 0;
+    const maxY = 1;
 
-    function xPos(i) { return padLeft + (i / (wins.length - 1)) * chartW; }
-    function yPos(v) { return padTop + ((maxY - v) / yRange) * chartH; }
+    function xPos(i) { return padLeft + (i / (matchedGames.length - 1)) * chartW; }
+    function yPos(v) { return padTop + ((maxY - v) / (maxY - minY)) * chartH; }
 
-    // Grid lines
+    // Grid lines at 0%, 25%, 50%, 75%, 100%
     ctx.strokeStyle = '#3a3a3c';
     ctx.lineWidth = 0.5;
-    for (let y = 1; y <= 6; y++) {
+    for (const pct of [0, 0.25, 0.5, 0.75, 1.0]) {
         ctx.beginPath();
-        ctx.moveTo(padLeft, yPos(y));
-        ctx.lineTo(padLeft + chartW, yPos(y));
+        ctx.moveTo(padLeft, yPos(pct));
+        ctx.lineTo(padLeft + chartW, yPos(pct));
         ctx.stroke();
     }
+
+    // 50% line highlighted (break-even)
+    ctx.strokeStyle = '#818384';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padLeft, yPos(0.5));
+    ctx.lineTo(padLeft + chartW, yPos(0.5));
+    ctx.stroke();
+    ctx.setLineDash([]);
 
     // Y-axis labels
     ctx.fillStyle = '#818384';
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    for (let y = 1; y <= 6; y++) {
-        ctx.fillText(y.toString(), padLeft - 6, yPos(y) + 4);
+    for (const pct of [0, 0.25, 0.5, 0.75, 1.0]) {
+        ctx.fillText(Math.round(pct * 100) + '%', padLeft - 6, yPos(pct) + 4);
     }
 
-    // Individual game dots
-    ctx.fillStyle = 'rgba(83, 141, 78, 0.4)';
-    for (let i = 0; i < wins.length; i++) {
+    // Individual game dots (green=win, red=loss, yellow=draw)
+    for (let i = 0; i < matchedGames.length; i++) {
+        const o = matchedGames[i].matchResult.outcome;
+        ctx.fillStyle = o === 'win' ? 'rgba(83, 141, 78, 0.6)' : o === 'loss' ? 'rgba(231, 76, 60, 0.6)' : 'rgba(181, 159, 59, 0.6)';
         ctx.beginPath();
-        ctx.arc(xPos(i), yPos(wins[i].guesses), 3, 0, Math.PI * 2);
+        ctx.arc(xPos(i), yPos(outcomes[i]), 3.5, 0, Math.PI * 2);
         ctx.fill();
     }
 
-    // Rolling average line
+    // Rolling win rate line
     ctx.strokeStyle = '#538d4e';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    for (let i = 0; i < rollingAvg.length; i++) {
+    for (let i = 0; i < rollingWinRate.length; i++) {
         const x = xPos(i);
-        const y = yPos(rollingAvg[i]);
+        const y = yPos(rollingWinRate[i]);
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
     }
     ctx.stroke();
 
-    // Current average label
-    const currentAvg = rollingAvg[rollingAvg.length - 1];
-    ctx.fillStyle = '#538d4e';
+    // Current rolling win rate label
+    const currentRate = rollingWinRate[rollingWinRate.length - 1];
+    ctx.fillStyle = currentRate >= 0.5 ? '#538d4e' : '#e74c3c';
     ctx.font = 'bold 12px system-ui, sans-serif';
     ctx.textAlign = 'left';
-    const lastX = xPos(wins.length - 1);
-    const lastY = yPos(currentAvg);
-    ctx.fillText(currentAvg.toFixed(2), Math.min(lastX + 6, cssWidth - 40), lastY + 4);
+    const lastX = xPos(matchedGames.length - 1);
+    const lastY = yPos(currentRate);
+    ctx.fillText(Math.round(currentRate * 100) + '%', Math.min(lastX + 6, cssWidth - 40), lastY + 4);
 
     // X-axis label
     ctx.fillStyle = '#818384';
     ctx.font = '10px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`${wins.length} games`, padLeft + chartW / 2, cssHeight - 4);
+    ctx.fillText(`${matchedGames.length} H2H games`, padLeft + chartW / 2, cssHeight - 4);
 
-    // All-time stats
-    const allTimeAvg = wins.reduce((s, g) => s + g.guesses, 0) / wins.length;
-    const totalGames = gameHistory.length;
-    const totalWins = wins.length;
+    // All-time H2H stats
+    const allTimeWins = matchedGames.filter(g => g.matchResult.outcome === 'win').length;
+    const allTimeLosses = matchedGames.filter(g => g.matchResult.outcome === 'loss').length;
+    const allTimeDraws = matchedGames.length - allTimeWins - allTimeLosses;
+    const allTimePnl = allTimeWins * (WIN_PAYOUT - ENTRY_COST) - allTimeLosses * ENTRY_COST;
+    const pnlStr = allTimePnl >= 0 ? `+$${allTimePnl.toFixed(2)}` : `-$${Math.abs(allTimePnl).toFixed(2)}`;
 
     const statsEl = document.getElementById('perf-all-time');
     if (statsEl) {
         statsEl.innerHTML =
-            `<span>All-time: <strong>${allTimeAvg.toFixed(2)}</strong> avg</span>` +
-            `<span>${totalWins}/${totalGames} won</span>` +
-            `<span>Rolling ${windowSize}-game avg: <strong>${currentAvg.toFixed(2)}</strong></span>`;
+            `<span>All-time H2H: <strong>${allTimeWins}W-${allTimeLosses}L${allTimeDraws > 0 ? '-' + allTimeDraws + 'D' : ''}</strong></span>` +
+            `<span>Win rate: <strong>${Math.round((allTimeWins / matchedGames.length) * 100)}%</strong></span>` +
+            `<span>P&L: <strong style="color:${allTimePnl >= 0 ? 'var(--correct)' : '#e74c3c'}">${pnlStr}</strong></span>` +
+            `<span>Rolling ${windowSize}: <strong style="color:${currentRate >= 0.5 ? 'var(--correct)' : '#e74c3c'}">${Math.round(currentRate * 100)}%</strong></span>`;
     }
 }
 
@@ -1042,6 +1088,13 @@ function saveMatchResult() {
     lastGame.matchResult = result;
     saveGameHistory();
 
+    // Update H2H session stats
+    if (outcome === 'win') { h2hStats.wins++; h2hStats.pnl += WIN_PAYOUT - ENTRY_COST; }
+    else if (outcome === 'loss') { h2hStats.losses++; h2hStats.pnl -= ENTRY_COST; }
+    else { h2hStats.draws++; }
+    updateSessionStats();
+    renderPerformanceGraph();
+
     // Show result
     document.getElementById('result-saved-msg').classList.remove('hidden');
     const autoDisplay = document.getElementById('auto-outcome-display');
@@ -1063,6 +1116,9 @@ function saveSoloResult() {
 
     lastGame.matchResult = { outcome: 'solo' };
     saveGameHistory();
+
+    h2hStats.solos++;
+    updateSessionStats();
 
     document.getElementById('result-saved-msg').classList.remove('hidden');
     setTimeout(() => {

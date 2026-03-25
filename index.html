@@ -68,7 +68,7 @@
             <div id="stats-section">
                 <h3>Algorithm Info</h3>
                 <div id="algo-info">
-                    <p><strong>Method:</strong> H2H frontier: expectedRemaining filter + green/orange rerank</p>
+                    <p><strong>Method:</strong> H2H frontier: answer-only candidates + green/orange rerank</p>
                     <p id="first-word-display"><strong>First word:</strong> SLATE (optimal H2H opener)</p>
                     <p id="entropy-display"></p>
                     <p id="computation-time"></p>
@@ -120,8 +120,16 @@
                     <div class="stat-label">Played</div>
                 </div>
                 <div class="stat-box">
-                    <div class="stat-value" id="stat-win-pct">0%</div>
-                    <div class="stat-label">Win %</div>
+                    <div class="stat-value" id="stat-h2h-record">-</div>
+                    <div class="stat-label">H2H Record</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-win-pct">-</div>
+                    <div class="stat-label">H2H Win%</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-pnl">$0.00</div>
+                    <div class="stat-label">Session P&L</div>
                 </div>
                 <div class="stat-box">
                     <div class="stat-value" id="stat-avg">-</div>
@@ -144,7 +152,7 @@
         </div>
 
         <footer class="version-footer">
-            <span id="version-display">Lingo Solver v3.0.0</span>
+            <span id="version-display">Lingo Solver v3.1.0</span>
         </footer>
     </div>
 

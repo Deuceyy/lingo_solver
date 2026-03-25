@@ -325,8 +325,12 @@ class WordleSolver {
             return pick;
         }
 
-        let candidateWords = this.allGuessWords;
-        let candidateCodes = this.guessCodes;
+        // Use answer-list words only as guess candidates.
+        // Answer words use common letters in common positions, matching what
+        // strong human players do. The full 14k guess list picks obscure words
+        // (rimon, porno, pronk, womby) that waste attempts.
+        let candidateWords = this.answerWords;
+        let candidateCodes = this.answerCodes;
 
         // State-dependent epsilon for frontier width
         // Large pool: tight frontier (attempts dominate H2H outcomes)
