@@ -248,6 +248,11 @@ function requestBestGuess() {
             updateAlgoInfo(entropy, computeTime, jackpotChance);
             setSubmitEnabled(true);
             hideComputingIndicator();
+
+            // Auto-solve when only 1 word remains — no need to manually green tiles
+            if (remaining === 1) {
+                setTimeout(() => markSolved(), 300);
+            }
         }
     };
 
@@ -271,6 +276,11 @@ function requestBestGuessMainThread() {
     updateCandidates();
     updateAlgoInfo(mainThreadSolver._lastEntropy, mainThreadSolver._lastComputeTime, mainThreadSolver._lastJackpotChance);
     setSubmitEnabled(true);
+
+    // Auto-solve when only 1 word remains
+    if (totalRemaining === 1) {
+        setTimeout(() => markSolved(), 300);
+    }
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
