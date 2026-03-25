@@ -1,10 +1,12 @@
 /**
- * Wordle Solver Engine — Entropy-based information-theoretic approach
+ * Wordle Solver Engine — H2H competition-optimized
  *
- * For each candidate guess, we compute the distribution of all 243 possible
- * feedback patterns (3^5) against the remaining answer pool. The guess with
- * the highest Shannon entropy (most evenly-distributed partitions) is optimal
- * because it maximally reduces uncertainty on average.
+ * Two-stage decision: attempt-safe frontier + tiebreaker reranking.
+ *
+ * H2H scoring: 1) fewer attempts, 2) more greens, 3) more oranges.
+ * The solver uses expectedRemaining as the primary metric to minimize
+ * attempts, then reranks the near-optimal frontier by solveProb,
+ * expectedGreens, expectedOranges, and answer-pool membership.
  *
  * Pattern encoding: each position is 0 (absent), 1 (present/misplaced), 2 (correct).
  * A pattern is encoded as a base-3 number: p0*1 + p1*3 + p2*9 + p3*27 + p4*81
@@ -19,7 +21,7 @@ class WordleSolver {
         this.guessHistory = [];                    // [{word, pattern}]
         this.hardMode = false;
         this.jackpotMode = false;                  // first guess from answer pool only
-        this.wordFrequencies = {};                 // {word: timesAppeared} — boosts repeat words
+        this.wordFrequencies = {};                 // {word: timesAppeared}
         this.totalGamesPlayed = 0;
 
         this._precomputePatternCache();
@@ -154,6 +156,7 @@ class WordleSolver {
 
     /**
      * Compute entropy for a guess word against the current remaining answers.
+     * Kept for backward compatibility / reporting.
      */
     computeEntropy(guessCodes, remainingCodes) {
         const n = remainingCodes.length;
@@ -179,7 +182,7 @@ class WordleSolver {
 
     /**
      * Compute expected green and orange tiles separately for a guess against remaining answers.
-     * In competition, tiebreakers are: 1) more greens, 2) more oranges — they're separate.
+     * Kept for backward compatibility.
      */
     computeExpectedTiles(guessCodes, remainingCodes) {
         const n = remainingCodes.length;
@@ -199,6 +202,55 @@ class WordleSolver {
         }
 
         return { greens: totalGreens / n, oranges: totalOranges / n };
+    }
+
+    /**
+     * Compute all H2H-relevant stats for a guess in a single pass.
+     * Returns: entropy, expectedRemaining, solveProb, expectedGreens, expectedOranges
+     */
+    computeGuessStats(guessCodes, remainingCodes) {
+        const n = remainingCodes.length;
+        if (n === 0) return { entropy: 0, expectedRemaining: 0, solveProb: 0, expectedGreens: 0, expectedOranges: 0 };
+
+        const buckets = new Int32Array(243);
+        let greenSum = 0;
+        let orangeSum = 0;
+        let solveCount = 0;
+
+        for (let i = 0; i < n; i++) {
+            const p = this.computePatternFast(guessCodes, remainingCodes[i]);
+            buckets[p]++;
+
+            if (p === 242) solveCount++;
+
+            let x = p;
+            for (let k = 0; k < 5; k++) {
+                const d = x % 3;
+                if (d === 2) greenSum++;
+                else if (d === 1) orangeSum++;
+                x = (x / 3) | 0;
+            }
+        }
+
+        let entropy = 0;
+        let expectedRemaining = 0;
+
+        for (let i = 0; i < 243; i++) {
+            const c = buckets[i];
+            if (!c) continue;
+
+            const prob = c / n;
+            entropy -= prob * Math.log2(prob);
+            expectedRemaining += prob * c;  // sum(c^2)/n
+        }
+
+        return {
+            entropy,
+            expectedRemaining,
+            solveProb: solveCount / n,
+            expectedGreens: greenSum / n,
+            expectedOranges: orangeSum / n
+        };
     }
 
     /**
@@ -222,15 +274,15 @@ class WordleSolver {
     }
 
     /**
-     * Get the best guess using entropy maximization with competition-aware tiebreaking.
+     * H2H-optimized guess selection using two-stage frontier approach.
      *
-     * Competition tiebreaker order:
-     *   1. Fewer attempts (entropy maximization)
-     *   2. More green tiles across all guesses
-     *   3. More orange tiles across all guesses
+     * Stage 1: Build an attempt-safe frontier — keep only guesses within
+     *          epsilon of the best expectedRemaining (lower = fewer attempts).
+     * Stage 2: Rerank the frontier by tiebreaker value:
+     *          solveProb > expectedGreens > expectedOranges > isAnswer > entropy
      *
-     * Strategy: among words with similar entropy, aggressively prefer those that
-     * produce more greens/oranges AND preserve confirmed green positions.
+     * Epsilon is state-dependent: tight when pool is large (attempts matter most),
+     * looser when pool is small (tiles matter more because attempts converge).
      */
     getBestGuess() {
         const remaining = this.remainingAnswers;
@@ -238,7 +290,6 @@ class WordleSolver {
 
         if (n === 0) return null;
         if (n === 1) return remaining[0];
-        if (n === 2) return remaining[0];
 
         const remainingCodes = remaining.map(w => this._wordToCodes(w));
         const remainingSet = new Set(remaining);
@@ -259,126 +310,159 @@ class WordleSolver {
             return 'slate';
         }
 
-        let candidateWords;
-        let candidateCodes;
-
+        // For n=2, pick the answer with more expected greens (for tiebreaker farming)
         if (n === 2) {
-            candidateWords = remaining;
-            candidateCodes = remainingCodes;
-        } else {
-            candidateWords = this.allGuessWords;
-            candidateCodes = this.guessCodes;
+            const stats0 = this.computeGuessStats(this._wordToCodes(remaining[0]), remainingCodes);
+            const stats1 = this.computeGuessStats(this._wordToCodes(remaining[1]), remainingCodes);
+            // Both solve with prob 0.5, so pick by greens then oranges
+            const pick = (stats0.expectedGreens > stats1.expectedGreens ||
+                         (stats0.expectedGreens === stats1.expectedGreens &&
+                          stats0.expectedOranges >= stats1.expectedOranges))
+                ? remaining[0] : remaining[1];
+            this._lastComputeTime = performance.now() - startTime;
+            this._lastEntropy = Math.max(stats0.entropy, stats1.entropy);
+            this._lastJackpotChance = null;
+            return pick;
         }
 
-        // Adaptive bonuses — tile optimization matters more as pool shrinks
-        // (when pool is small, many words have similar entropy)
-        // Green bonus is aggressive because 55%+ of competitive matches are decided
-        // by green tile count as tiebreaker when attempts are equal.
-        const answerBonus = n <= 20 ? 0.08 : 0.04;   // strongly prefer answer-pool words
-        const greenBonus  = n <= 20 ? 0.12 : 0.06;   // greens = first tiebreaker (critical)
-        const orangeBonus = n <= 20 ? 0.04 : 0.02;   // oranges = second tiebreaker
-        const freqBonus = 0.003;
+        let candidateWords = this.allGuessWords;
+        let candidateCodes = this.guessCodes;
 
-        // Bonus for preserving confirmed green positions in the guess
-        // This ensures we don't "waste" known greens by picking words without them
-        const confirmedGreens = this._getConfirmedGreens();
-        const greenPreserveBonus = 0.06;
+        // State-dependent epsilon for frontier width
+        // Large pool: tight frontier (attempts dominate H2H outcomes)
+        // Small pool: wider frontier (attempts converge, tiles decide)
+        let epsilon;
+        if (n > 100) {
+            epsilon = 1.02;     // 2% tolerance — very tight, protect attempts
+        } else if (n > 20) {
+            epsilon = 1.05;     // 5% tolerance — start allowing tile-rich picks
+        } else if (n > 5) {
+            epsilon = 1.10;     // 10% tolerance — tiles are decisive here
+        } else {
+            epsilon = 1.20;     // 20% tolerance — very small pool, farm tiles aggressively
+        }
 
-        let bestWord = null;
-        let bestScore = -Infinity;
+        // Compute stats for all candidates
+        const allStats = new Array(candidateWords.length);
+        let bestExpRemaining = Infinity;
 
         for (let i = 0; i < candidateWords.length; i++) {
-            const word = candidateWords[i];
-            const codes = candidateCodes[i];
+            const stats = this.computeGuessStats(candidateCodes[i], remainingCodes);
+            const isAnswer = remainingSet.has(candidateWords[i]) ? 1 : 0;
+            allStats[i] = {
+                idx: i,
+                word: candidateWords[i],
+                expectedRemaining: stats.expectedRemaining,
+                entropy: stats.entropy,
+                solveProb: stats.solveProb,
+                expectedGreens: stats.expectedGreens,
+                expectedOranges: stats.expectedOranges,
+                isAnswer
+            };
 
-            let score = this.computeEntropy(codes, remainingCodes);
-
-            if (remainingSet.has(word)) {
-                score += answerBonus;
-                const freq = this.wordFrequencies[word] || 0;
-                if (freq > 0 && this.totalGamesPlayed > 0) {
-                    score += freq * freqBonus;
-                }
-            }
-
-            // Separate green and orange tile scoring (they're separate tiebreakers)
-            const tiles = this.computeExpectedTiles(codes, remainingCodes);
-            score += tiles.greens * greenBonus;
-            score += tiles.oranges * orangeBonus;
-
-            // Bonus for preserving already-confirmed green positions
-            if (confirmedGreens.length > 0) {
-                let preserved = 0;
-                for (const [pos, charCode] of confirmedGreens) {
-                    if (codes[pos] === charCode) preserved++;
-                }
-                score += preserved * greenPreserveBonus;
-            }
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestWord = word;
+            if (stats.expectedRemaining < bestExpRemaining) {
+                bestExpRemaining = stats.expectedRemaining;
             }
         }
 
+        // Stage 1: Build attempt-safe frontier
+        const frontierThreshold = bestExpRemaining * epsilon;
+        const frontier = [];
+        for (let i = 0; i < allStats.length; i++) {
+            if (allStats[i].expectedRemaining <= frontierThreshold) {
+                frontier.push(allStats[i]);
+            }
+        }
+
+        // Stage 2: Rerank frontier by H2H tiebreaker value
+        // Priority: solveProb (finish fast) > greens > oranges > isAnswer > entropy
+        frontier.sort((a, b) => {
+            // 1. Solve probability — finishing this turn is always best for attempts
+            const solveDiff = b.solveProb - a.solveProb;
+            if (Math.abs(solveDiff) > 1e-9) return solveDiff;
+
+            // 2. Expected greens — first H2H tiebreaker
+            const greenDiff = b.expectedGreens - a.expectedGreens;
+            if (Math.abs(greenDiff) > 1e-9) return greenDiff;
+
+            // 3. Expected oranges — second H2H tiebreaker
+            const orangeDiff = b.expectedOranges - a.expectedOranges;
+            if (Math.abs(orangeDiff) > 1e-9) return orangeDiff;
+
+            // 4. Prefer answer-pool words (can solve AND produce greens)
+            if (a.isAnswer !== b.isAnswer) return b.isAnswer - a.isAnswer;
+
+            // 5. Lower expectedRemaining (tighter solve)
+            const remDiff = a.expectedRemaining - b.expectedRemaining;
+            if (Math.abs(remDiff) > 1e-9) return remDiff;
+
+            // 6. Higher entropy as final tiebreaker
+            return b.entropy - a.entropy;
+        });
+
+        const best = frontier[0];
+
         this._lastComputeTime = performance.now() - startTime;
-        this._lastEntropy = bestScore;
+        this._lastEntropy = best.entropy;
         this._lastJackpotChance = null;
 
-        return bestWord;
+        return best.word;
     }
 
     /**
      * Compute best first guess restricted to answer pool words.
-     * Gives jackpot chance while still maximizing entropy.
-     * Deprioritizes previously-used words (they're unlikely repeats).
+     * Uses frontier approach: near-best expectedRemaining, rerank by tiles.
      */
     _computeBestFirstGuessFromAnswers(remainingCodes, remainingSet, startTime) {
         const n = remainingCodes.length;
 
-        const answerBonus = 0.04;
-        const greenBonus = 0.06;
-        const orangeBonus = 0.02;
-        const freqBonus = 0.003;
-
-        // Score all answer-pool words
         const scored = [];
+        let bestExpRemaining = Infinity;
+
         for (let i = 0; i < this.answerWords.length; i++) {
             const word = this.answerWords[i];
             const codes = this.answerCodes[i];
 
-            let score = this.computeEntropy(codes, remainingCodes);
+            const stats = this.computeGuessStats(codes, remainingCodes);
 
-            if (remainingSet.has(word)) {
-                score += answerBonus;
+            if (stats.expectedRemaining < bestExpRemaining) {
+                bestExpRemaining = stats.expectedRemaining;
             }
 
-            // Boost words seen before — game repeats words
-            const freq = this.wordFrequencies[word] || 0;
-            if (freq > 0 && this.totalGamesPlayed > 0) {
-                score += freq * freqBonus;
-            }
-
-            const tiles = this.computeExpectedTiles(codes, remainingCodes);
-            score += tiles.greens * greenBonus;
-            score += tiles.oranges * orangeBonus;
-
-            scored.push({ word, score });
+            scored.push({
+                word,
+                expectedRemaining: stats.expectedRemaining,
+                entropy: stats.entropy,
+                solveProb: stats.solveProb,
+                expectedGreens: stats.expectedGreens,
+                expectedOranges: stats.expectedOranges
+            });
         }
 
-        // Sort by score descending
-        scored.sort((a, b) => b.score - a.score);
+        // Frontier: within 3% of best expectedRemaining (tight for opener)
+        const threshold = bestExpRemaining * 1.03;
+        const frontier = scored.filter(s => s.expectedRemaining <= threshold);
 
-        // Pick from top candidates within 0.05 bits of best (negligible solve-speed difference)
-        const topScore = scored[0].score;
-        const threshold = topScore - 0.05;
-        const topCandidates = scored.filter(s => s.score >= threshold);
+        // Rerank by H2H value
+        frontier.sort((a, b) => {
+            const solveDiff = b.solveProb - a.solveProb;
+            if (Math.abs(solveDiff) > 1e-9) return solveDiff;
 
-        // Random pick from the pool
-        const pick = topCandidates[Math.floor(Math.random() * topCandidates.length)];
+            const greenDiff = b.expectedGreens - a.expectedGreens;
+            if (Math.abs(greenDiff) > 1e-9) return greenDiff;
+
+            const orangeDiff = b.expectedOranges - a.expectedOranges;
+            if (Math.abs(orangeDiff) > 1e-9) return orangeDiff;
+
+            return a.expectedRemaining - b.expectedRemaining;
+        });
+
+        // Pick randomly from top 5 candidates for coverage
+        const topN = Math.min(5, frontier.length);
+        const pick = frontier[Math.floor(Math.random() * topN)];
 
         this._lastComputeTime = performance.now() - startTime;
-        this._lastEntropy = pick.score;
+        this._lastEntropy = pick.entropy;
         this._lastJackpotChance = n > 0 ? (1 / n) : 0;
 
         return pick.word;

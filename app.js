@@ -16,7 +16,7 @@ let jackpotMode = false;
 // Session stats
 let sessionStats = { games: 0, wins: 0, totalGuesses: 0, distribution: {1:0, 2:0, 3:0, 4:0, 5:0, 6:0, fail:0} };
 
-const SOLVER_VERSION = '2.0.0';
+const SOLVER_VERSION = '3.0.0';
 
 // Current game's guess log (for detailed export)
 let currentGameGuesses = [];
