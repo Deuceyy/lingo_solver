@@ -24,8 +24,17 @@ self.onmessage = function(e) {
         }
 
         case 'setUsedWords': {
-            solver.setUsedWords(data.words);
+            // Legacy support — convert flat list to frequency map
+            const freqMap = {};
+            data.words.forEach(w => { freqMap[w] = (freqMap[w] || 0) + 1; });
+            solver.setWordFrequencies(freqMap);
             self.postMessage({ type: 'usedWordsSet', data: { poolSize: solver.answerWords.length } });
+            break;
+        }
+
+        case 'setWordFrequencies': {
+            solver.setWordFrequencies(data.freqMap);
+            self.postMessage({ type: 'wordFrequenciesSet' });
             break;
         }
 

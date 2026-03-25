@@ -19,7 +19,10 @@ let sessionStats = { games: 0, wins: 0, totalGuesses: 0, distribution: {1:0, 2:0
 // Persistent game history
 let gameHistory = [];
 
-// Used words (persisted in localStorage)
+// Word frequency tracking (persisted in localStorage)
+// Format: {word: count} — tracks how many times each word has appeared as an answer
+let wordFrequencies = {};
+// Legacy flat list derived from frequencies for backward-compat UI
 let usedWords = [];
 
 const PATTERN_CLASSES = ['absent', 'present', 'correct'];
@@ -29,21 +32,35 @@ const PATTERN_LABELS = ['absent', 'misplaced', 'correct'];
 
 function loadUsedWords() {
     try {
-        const stored = localStorage.getItem('wordle-solver-used-words');
-        if (stored) {
-            usedWords = JSON.parse(stored);
+        // Try new frequency format first
+        const freqStored = localStorage.getItem('wordle-solver-word-frequencies');
+        if (freqStored) {
+            wordFrequencies = JSON.parse(freqStored);
         }
+        // Migrate legacy flat array if frequencies are empty
+        if (Object.keys(wordFrequencies).length === 0) {
+            const stored = localStorage.getItem('wordle-solver-used-words');
+            if (stored) {
+                const oldList = JSON.parse(stored);
+                oldList.forEach(w => {
+                    wordFrequencies[w.toLowerCase()] = (wordFrequencies[w.toLowerCase()] || 0) + 1;
+                });
+            }
+        }
+        // Derive flat list from frequencies
+        usedWords = Object.keys(wordFrequencies).sort();
     } catch (e) {
+        wordFrequencies = {};
         usedWords = [];
     }
 }
 
 function saveUsedWords() {
     try {
+        localStorage.setItem('wordle-solver-word-frequencies', JSON.stringify(wordFrequencies));
+        // Also save legacy format for backward compat
         localStorage.setItem('wordle-solver-used-words', JSON.stringify(usedWords));
-    } catch (e) {
-        // localStorage may be unavailable
-    }
+    } catch (e) {}
 }
 
 function loadGameHistory() {
@@ -151,10 +168,10 @@ async function initMainThread(answers, allWords) {
 
 function syncSolverSettings() {
     if (worker) {
-        worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+        worker.postMessage({ type: 'setWordFrequencies', data: { freqMap: wordFrequencies } });
         worker.postMessage({ type: 'setJackpotMode', data: { enabled: jackpotMode } });
     } else if (mainThreadSolver) {
-        mainThreadSolver.setUsedWords(usedWords);
+        mainThreadSolver.setWordFrequencies(wordFrequencies);
         mainThreadSolver.jackpotMode = jackpotMode;
     }
 }
@@ -553,41 +570,49 @@ function hideLoading() {
 
 // ── Used words management ───────────────────────────────────────────────────
 
-function addUsedWord(word) {
+function addUsedWord(word, incrementFrequency = true) {
     word = word.toLowerCase().trim();
-    if (word.length !== 5 || usedWords.includes(word)) return;
-    usedWords.push(word);
-    usedWords.sort();
+    if (word.length !== 5) return;
+    if (incrementFrequency) {
+        wordFrequencies[word] = (wordFrequencies[word] || 0) + 1;
+    } else if (wordFrequencies[word]) {
+        return; // already tracked, no change needed
+    } else {
+        wordFrequencies[word] = 1;
+    }
+    usedWords = Object.keys(wordFrequencies).sort();
     saveUsedWords();
     renderUsedWordsUI();
-    // Update solver with new used words list
+    // Update solver with frequency data
     if (worker) {
-        worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+        worker.postMessage({ type: 'setWordFrequencies', data: { freqMap: wordFrequencies } });
     } else if (mainThreadSolver) {
-        mainThreadSolver.setUsedWords(usedWords);
+        mainThreadSolver.setWordFrequencies(wordFrequencies);
     }
 }
 
 function removeUsedWord(word) {
-    usedWords = usedWords.filter(w => w !== word);
+    delete wordFrequencies[word];
+    usedWords = Object.keys(wordFrequencies).sort();
     saveUsedWords();
     renderUsedWordsUI();
     if (worker) {
-        worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+        worker.postMessage({ type: 'setWordFrequencies', data: { freqMap: wordFrequencies } });
     } else if (mainThreadSolver) {
-        mainThreadSolver.setUsedWords(usedWords);
+        mainThreadSolver.setWordFrequencies(wordFrequencies);
     }
 }
 
 function clearUsedWords() {
     if (!confirm(`Clear all ${usedWords.length} used words?`)) return;
+    wordFrequencies = {};
     usedWords = [];
     saveUsedWords();
     renderUsedWordsUI();
     if (worker) {
-        worker.postMessage({ type: 'setUsedWords', data: { words: usedWords } });
+        worker.postMessage({ type: 'setWordFrequencies', data: { freqMap: wordFrequencies } });
     } else if (mainThreadSolver) {
-        mainThreadSolver.setUsedWords(usedWords);
+        mainThreadSolver.setWordFrequencies(wordFrequencies);
     }
 }
 

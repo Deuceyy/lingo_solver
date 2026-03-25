@@ -19,7 +19,8 @@ class WordleSolver {
         this.guessHistory = [];                    // [{word, pattern}]
         this.hardMode = false;
         this.jackpotMode = false;                  // first guess from answer pool only
-        this.usedWords = new Set();                // previously seen answer words (deprioritized)
+        this.wordFrequencies = {};                 // {word: timesAppeared} — boosts repeat words
+        this.totalGamesPlayed = 0;
 
         this._precomputePatternCache();
     }
@@ -35,11 +36,16 @@ class WordleSolver {
     }
 
     /**
-     * Set previously-seen answer words. These stay in the pool but are
-     * deprioritized for jackpot first-guess selection since repeats are rare.
+     * Set word frequency map from game history.
+     * Words with higher frequency get a small boost since the game does repeat words.
+     * @param {Object} freqMap - {word: count} e.g. {"mince": 2, "crown": 2, "crane": 1}
      */
-    setUsedWords(words) {
-        this.usedWords = new Set(words.map(w => w.toLowerCase()));
+    setWordFrequencies(freqMap) {
+        this.wordFrequencies = {};
+        for (const [w, count] of Object.entries(freqMap)) {
+            this.wordFrequencies[w.toLowerCase()] = count;
+        }
+        this.totalGamesPlayed = Object.values(this.wordFrequencies).reduce((a, b) => a + b, 0);
     }
 
     /**
@@ -172,36 +178,59 @@ class WordleSolver {
     }
 
     /**
-     * Compute expected colored tiles (greens + yellows) for a guess against remaining answers.
-     * Used as tiebreaker — more colored tiles = better score in competition.
-     * Greens weighted 1.5x since they're the first tiebreaker, yellows 1x.
+     * Compute expected green and orange tiles separately for a guess against remaining answers.
+     * In competition, tiebreakers are: 1) more greens, 2) more oranges — they're separate.
      */
-    computeExpectedColoredTiles(guessCodes, remainingCodes) {
+    computeExpectedTiles(guessCodes, remainingCodes) {
         const n = remainingCodes.length;
-        if (n === 0) return 0;
+        if (n === 0) return { greens: 0, oranges: 0 };
 
-        let totalColored = 0;
+        let totalGreens = 0;
+        let totalOranges = 0;
         for (let i = 0; i < n; i++) {
             const pattern = this.computePatternFast(guessCodes, remainingCodes[i]);
             let p = pattern;
             for (let j = 0; j < 5; j++) {
                 const v = p % 3;
-                if (v === 2) totalColored += 1.5; // greens worth more (first tiebreaker)
-                else if (v === 1) totalColored += 1; // yellows (second tiebreaker)
+                if (v === 2) totalGreens++;
+                else if (v === 1) totalOranges++;
                 p = Math.floor(p / 3);
             }
         }
 
-        return totalColored / n;
+        return { greens: totalGreens / n, oranges: totalOranges / n };
     }
 
     /**
-     * Get the best guess using entropy maximization.
+     * Get set of confirmed green positions from guess history.
+     * Returns array of [position, charCode] pairs.
+     */
+    _getConfirmedGreens() {
+        if (this._confirmedGreensCache) return this._confirmedGreensCache;
+        const greens = [];
+        const seen = new Set();
+        for (const { word, pattern } of this.guessHistory) {
+            for (let i = 0; i < 5; i++) {
+                if (pattern[i] === 2 && !seen.has(i)) {
+                    greens.push([i, word.charCodeAt(i)]);
+                    seen.add(i);
+                }
+            }
+        }
+        this._confirmedGreensCache = greens;
+        return greens;
+    }
+
+    /**
+     * Get the best guess using entropy maximization with competition-aware tiebreaking.
      *
-     * Scoring for competition optimization:
-     * - Primary: entropy (solve fast = fewer attempts)
-     * - Secondary: prefer possible answers (can win outright)
-     * - Tertiary: expected colored tiles (green/yellow tiebreaker)
+     * Competition tiebreaker order:
+     *   1. Fewer attempts (entropy maximization)
+     *   2. More green tiles across all guesses
+     *   3. More orange tiles across all guesses
+     *
+     * Strategy: among words with similar entropy, aggressively prefer those that
+     * produce more greens/oranges AND preserve confirmed green positions.
      */
     getBestGuess() {
         const remaining = this.remainingAnswers;
@@ -216,10 +245,12 @@ class WordleSolver {
 
         const startTime = performance.now();
 
+        // Clear cached confirmed greens for this computation
+        this._confirmedGreensCache = null;
+
         // First guess handling
         if (this.guessHistory.length === 0) {
             if (this.jackpotMode) {
-                // Jackpot mode: best first guess from answer pool only (can hit jackpot)
                 return this._computeBestFirstGuessFromAnswers(remainingCodes, remainingSet, startTime);
             }
             this._lastComputeTime = 0;
@@ -239,13 +270,20 @@ class WordleSolver {
             candidateCodes = this.guessCodes;
         }
 
+        // Adaptive bonuses — tile optimization matters more as pool shrinks
+        // (when pool is small, many words have similar entropy)
+        const answerBonus = n <= 20 ? 0.08 : 0.04;   // strongly prefer answer-pool words
+        const greenBonus  = n <= 20 ? 0.015 : 0.008;  // greens = first tiebreaker
+        const orangeBonus = n <= 20 ? 0.005 : 0.003;  // oranges = second tiebreaker
+        const freqBonus = 0.003;
+
+        // Bonus for preserving confirmed green positions in the guess
+        // This ensures we don't "waste" known greens by picking words without them
+        const confirmedGreens = this._getConfirmedGreens();
+        const greenPreserveBonus = 0.02;
+
         let bestWord = null;
         let bestScore = -Infinity;
-
-        const answerBonus = 0.02;
-        const tileBonus = 0.001;
-        // Deprioritize used words in answer selection — they're unlikely repeats
-        const usedPenalty = 0.005;
 
         for (let i = 0; i < candidateWords.length; i++) {
             const word = candidateWords[i];
@@ -255,14 +293,25 @@ class WordleSolver {
 
             if (remainingSet.has(word)) {
                 score += answerBonus;
-                // Deprioritize previously-used answers (unlikely repeats)
-                if (this.usedWords.has(word)) {
-                    score -= usedPenalty;
+                const freq = this.wordFrequencies[word] || 0;
+                if (freq > 0 && this.totalGamesPlayed > 0) {
+                    score += freq * freqBonus;
                 }
             }
 
-            const coloredTiles = this.computeExpectedColoredTiles(codes, remainingCodes);
-            score += coloredTiles * tileBonus;
+            // Separate green and orange tile scoring (they're separate tiebreakers)
+            const tiles = this.computeExpectedTiles(codes, remainingCodes);
+            score += tiles.greens * greenBonus;
+            score += tiles.oranges * orangeBonus;
+
+            // Bonus for preserving already-confirmed green positions
+            if (confirmedGreens.length > 0) {
+                let preserved = 0;
+                for (const [pos, charCode] of confirmedGreens) {
+                    if (codes[pos] === charCode) preserved++;
+                }
+                score += preserved * greenPreserveBonus;
+            }
 
             if (score > bestScore) {
                 bestScore = score;
@@ -285,8 +334,10 @@ class WordleSolver {
     _computeBestFirstGuessFromAnswers(remainingCodes, remainingSet, startTime) {
         const n = remainingCodes.length;
 
-        const answerBonus = 0.02;
-        const tileBonus = 0.001;
+        const answerBonus = 0.04;
+        const greenBonus = 0.008;
+        const orangeBonus = 0.003;
+        const freqBonus = 0.003;
 
         // Score all answer-pool words
         const scored = [];
@@ -300,10 +351,17 @@ class WordleSolver {
                 score += answerBonus;
             }
 
-            const coloredTiles = this.computeExpectedColoredTiles(codes, remainingCodes);
-            score += coloredTiles * tileBonus;
+            // Boost words seen before — game repeats words
+            const freq = this.wordFrequencies[word] || 0;
+            if (freq > 0 && this.totalGamesPlayed > 0) {
+                score += freq * freqBonus;
+            }
 
-            scored.push({ word, score, used: this.usedWords.has(word) });
+            const tiles = this.computeExpectedTiles(codes, remainingCodes);
+            score += tiles.greens * greenBonus;
+            score += tiles.oranges * orangeBonus;
+
+            scored.push({ word, score });
         }
 
         // Sort by score descending
@@ -314,23 +372,19 @@ class WordleSolver {
         const threshold = topScore - 0.05;
         const topCandidates = scored.filter(s => s.score >= threshold);
 
-        // Filter to unused words if possible (unused = never been an answer before)
-        const unusedCandidates = topCandidates.filter(s => !s.used);
-        const pool = unusedCandidates.length > 0 ? unusedCandidates : topCandidates;
-
         // Random pick from the pool
-        const pick = pool[Math.floor(Math.random() * pool.length)];
+        const pick = topCandidates[Math.floor(Math.random() * topCandidates.length)];
 
-        const unusedCount = this.answerWords.filter(w => !this.usedWords.has(w)).length;
         this._lastComputeTime = performance.now() - startTime;
         this._lastEntropy = pick.score;
-        this._lastJackpotChance = unusedCount > 0 ? (1 / unusedCount) : (1 / n);
+        this._lastJackpotChance = n > 0 ? (1 / n) : 0;
 
         return pick.word;
     }
 
     applyGuess(word, pattern) {
         this.guessHistory.push({ word, pattern: [...pattern] });
+        this._confirmedGreensCache = null; // invalidate cache
 
         this.remainingAnswers = this.remainingAnswers.filter(answer => {
             const expectedPattern = this.computePattern(word, answer);
@@ -342,6 +396,7 @@ class WordleSolver {
     reset() {
         this.remainingAnswers = [...this.answerWords];
         this.guessHistory = [];
+        this._confirmedGreensCache = null;
     }
 
     isValidGuess(word) {
