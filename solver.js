@@ -325,34 +325,32 @@ class WordleSolver {
             return pick;
         }
 
-        // Use answer-list words only as guess candidates.
-        // Answer words use common letters in common positions, matching what
-        // strong human players do. The full 14k guess list picks obscure words
-        // (rimon, porno, pronk, womby) that waste attempts.
-        let candidateWords = this.answerWords;
-        let candidateCodes = this.answerCodes;
+        // REMAINING-ONLY candidates: every guess can potentially solve
+        // this turn, naturally preserves known greens/oranges, and maximizes
+        // green tile accumulation. Matches how elite human players play —
+        // they always guess words that could be the answer.
+        let candidateWords = remaining;
+        let candidateCodes = remainingCodes;
 
-        // State-dependent epsilon for frontier width
-        // Large pool: tight frontier (attempts dominate H2H outcomes)
-        // Small pool: wider frontier (attempts converge, tiles decide)
+        // Wider epsilon since all candidates are viable answers.
+        // The frontier filters by partition quality, then we rerank by tiles.
         let epsilon;
         if (n > 100) {
-            epsilon = 1.02;     // 2% tolerance — very tight, protect attempts
+            epsilon = 1.05;     // 5% tolerance
         } else if (n > 20) {
-            epsilon = 1.05;     // 5% tolerance — start allowing tile-rich picks
+            epsilon = 1.10;     // 10% tolerance
         } else if (n > 5) {
-            epsilon = 1.10;     // 10% tolerance — tiles are decisive here
+            epsilon = 1.15;     // 15% tolerance — tiles matter more
         } else {
-            epsilon = 1.20;     // 20% tolerance — very small pool, farm tiles aggressively
+            epsilon = 1.30;     // 30% tolerance — very small pool, farm tiles
         }
 
-        // Compute stats for all candidates
+        // Compute stats for all remaining candidates
         const allStats = new Array(candidateWords.length);
         let bestExpRemaining = Infinity;
 
         for (let i = 0; i < candidateWords.length; i++) {
             const stats = this.computeGuessStats(candidateCodes[i], remainingCodes);
-            const isAnswer = remainingSet.has(candidateWords[i]) ? 1 : 0;
             allStats[i] = {
                 idx: i,
                 word: candidateWords[i],
@@ -360,8 +358,7 @@ class WordleSolver {
                 entropy: stats.entropy,
                 solveProb: stats.solveProb,
                 expectedGreens: stats.expectedGreens,
-                expectedOranges: stats.expectedOranges,
-                isAnswer
+                expectedOranges: stats.expectedOranges
             };
 
             if (stats.expectedRemaining < bestExpRemaining) {
@@ -379,28 +376,21 @@ class WordleSolver {
         }
 
         // Stage 2: Rerank frontier by H2H tiebreaker value
-        // Priority: solveProb (finish fast) > greens > oranges > isAnswer > entropy
+        // All candidates can solve, so rank by: greens > oranges > partition > entropy
         frontier.sort((a, b) => {
-            // 1. Solve probability — finishing this turn is always best for attempts
-            const solveDiff = b.solveProb - a.solveProb;
-            if (Math.abs(solveDiff) > 1e-9) return solveDiff;
-
-            // 2. Expected greens — first H2H tiebreaker
+            // 1. Expected greens — most important H2H tiebreaker
             const greenDiff = b.expectedGreens - a.expectedGreens;
             if (Math.abs(greenDiff) > 1e-9) return greenDiff;
 
-            // 3. Expected oranges — second H2H tiebreaker
+            // 2. Expected oranges — second H2H tiebreaker
             const orangeDiff = b.expectedOranges - a.expectedOranges;
             if (Math.abs(orangeDiff) > 1e-9) return orangeDiff;
 
-            // 4. Prefer answer-pool words (can solve AND produce greens)
-            if (a.isAnswer !== b.isAnswer) return b.isAnswer - a.isAnswer;
-
-            // 5. Lower expectedRemaining (tighter solve)
+            // 3. Lower expectedRemaining (tighter solve)
             const remDiff = a.expectedRemaining - b.expectedRemaining;
             if (Math.abs(remDiff) > 1e-9) return remDiff;
 
-            // 6. Higher entropy as final tiebreaker
+            // 4. Higher entropy as final tiebreaker
             return b.entropy - a.entropy;
         });
 
