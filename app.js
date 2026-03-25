@@ -24,6 +24,9 @@ let currentGameGuesses = [];
 // Persistent game history
 let gameHistory = [];
 
+// Track when this browser session started (for copy-session feature)
+const SESSION_START_TIME = new Date().toISOString();
+
 // Word frequency tracking (persisted in localStorage)
 // Format: {word: count} — tracks how many times each word has appeared as an answer
 let wordFrequencies = {};
@@ -550,9 +553,17 @@ function showSolved(word, numGuesses) {
     const matchSection = document.getElementById('match-result-section');
     if (matchSection) {
         matchSection.classList.remove('hidden');
-        document.getElementById('match-outcome').value = '';
-        document.getElementById('opponent-fields').classList.add('hidden');
+        const oppAttempts = document.getElementById('opp-attempts');
+        const oppGreens = document.getElementById('opp-greens');
+        const oppOranges = document.getElementById('opp-oranges');
+        const oppName = document.getElementById('opp-name');
+        if (oppAttempts) oppAttempts.value = '';
+        if (oppGreens) oppGreens.value = '';
+        if (oppOranges) oppOranges.value = '';
+        if (oppName) oppName.value = '';
         document.getElementById('result-saved-msg').classList.add('hidden');
+        const autoDisplay = document.getElementById('auto-outcome-display');
+        if (autoDisplay) { autoDisplay.classList.add('hidden'); autoDisplay.textContent = ''; }
     }
 
     updateSessionStats();
@@ -941,24 +952,15 @@ document.addEventListener('DOMContentLoaded', () => {
         clearBtn.addEventListener('click', clearUsedWords);
     }
 
-    // Match outcome toggle — show opponent fields for win/loss/draw
-    const matchOutcome = document.getElementById('match-outcome');
-    if (matchOutcome) {
-        matchOutcome.addEventListener('change', () => {
-            const val = matchOutcome.value;
-            const oppFields = document.getElementById('opponent-fields');
-            if (val === 'win' || val === 'loss' || val === 'draw') {
-                oppFields.classList.remove('hidden');
-            } else {
-                oppFields.classList.add('hidden');
-            }
-        });
-    }
-
-    // Save match result
+    // Save match result buttons
     const saveResultBtn = document.getElementById('save-result-btn');
     if (saveResultBtn) {
         saveResultBtn.addEventListener('click', saveMatchResult);
+    }
+
+    const saveSoloBtn = document.getElementById('save-solo-btn');
+    if (saveSoloBtn) {
+        saveSoloBtn.addEventListener('click', saveSoloResult);
     }
 
     // Export buttons
@@ -970,6 +972,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const copyLogBtn = document.getElementById('copy-log-btn');
     if (copyLogBtn) copyLogBtn.addEventListener('click', copyLogToClipboard);
+
+    const copySessionBtn = document.getElementById('copy-session-btn');
+    if (copySessionBtn) copySessionBtn.addEventListener('click', copySessionToClipboard);
 
     // Set version display
     const versionEl = document.getElementById('version-display');
@@ -993,30 +998,70 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Match result reporting ──────────────────────────────────────────────────
 
-function saveMatchResult() {
-    const outcome = document.getElementById('match-outcome').value;
-    if (!outcome) return;
+function computeH2HOutcome(myAttempts, myGreens, myOranges, oppAttempts, oppGreens, oppOranges) {
+    // H2H tiebreakers: 1) fewer attempts, 2) more greens, 3) more oranges, 4) coin_flip
+    if (myAttempts < oppAttempts) return { outcome: 'win', reason: 'fewer_attempts' };
+    if (myAttempts > oppAttempts) return { outcome: 'loss', reason: 'fewer_attempts' };
+    if (myGreens > oppGreens) return { outcome: 'win', reason: 'more_greens' };
+    if (myGreens < oppGreens) return { outcome: 'loss', reason: 'more_greens' };
+    if (myOranges > oppOranges) return { outcome: 'win', reason: 'more_oranges' };
+    if (myOranges < oppOranges) return { outcome: 'loss', reason: 'more_oranges' };
+    return { outcome: 'draw', reason: 'coin_flip' };
+}
 
+function saveMatchResult() {
     const lastGame = gameHistory[gameHistory.length - 1];
     if (!lastGame) return;
 
-    const result = { outcome };
+    const oppAttemptsVal = document.getElementById('opp-attempts').value;
+    const oppGreensVal = document.getElementById('opp-greens').value;
+    const oppOrangesVal = document.getElementById('opp-oranges').value;
+    const oppName = document.getElementById('opp-name').value.trim();
 
-    if (outcome !== 'solo') {
-        const oppAttempts = document.getElementById('opp-attempts').value;
-        const oppGreens = document.getElementById('opp-greens').value;
-        const oppOranges = document.getElementById('opp-oranges').value;
-        const oppName = document.getElementById('opp-name').value.trim();
-        const lossReason = document.getElementById('loss-reason').value;
+    if (!oppAttemptsVal) return; // need at least opponent attempts
 
-        if (oppAttempts) result.oppAttempts = parseInt(oppAttempts);
-        if (oppGreens) result.oppGreens = parseInt(oppGreens);
-        if (oppOranges) result.oppOranges = parseInt(oppOranges);
-        if (oppName) result.opponent = oppName;
-        if (lossReason) result.lossReason = lossReason;
-    }
+    const oppAttempts = parseInt(oppAttemptsVal);
+    const oppGreens = parseInt(oppGreensVal) || 0;
+    const oppOranges = parseInt(oppOrangesVal) || 0;
+
+    const myAttempts = lastGame.guesses;
+    const myGreens = lastGame.myGreens || 0;
+    const myOranges = lastGame.myOranges || 0;
+
+    const { outcome, reason } = computeH2HOutcome(myAttempts, myGreens, myOranges, oppAttempts, oppGreens, oppOranges);
+
+    const result = {
+        outcome,
+        reason,
+        oppAttempts,
+        oppGreens,
+        oppOranges
+    };
+    if (oppName) result.opponent = oppName;
 
     lastGame.matchResult = result;
+    saveGameHistory();
+
+    // Show result
+    document.getElementById('result-saved-msg').classList.remove('hidden');
+    const autoDisplay = document.getElementById('auto-outcome-display');
+    if (autoDisplay) {
+        const label = outcome === 'win' ? 'WIN' : outcome === 'loss' ? 'LOSS' : 'DRAW';
+        const color = outcome === 'win' ? 'var(--correct)' : outcome === 'loss' ? 'var(--absent)' : 'var(--present)';
+        autoDisplay.textContent = `${label} (${reason.replace(/_/g, ' ')})`;
+        autoDisplay.style.color = color;
+        autoDisplay.classList.remove('hidden');
+    }
+    setTimeout(() => {
+        document.getElementById('result-saved-msg').classList.add('hidden');
+    }, 3000);
+}
+
+function saveSoloResult() {
+    const lastGame = gameHistory[gameHistory.length - 1];
+    if (!lastGame) return;
+
+    lastGame.matchResult = { outcome: 'solo' };
     saveGameHistory();
 
     document.getElementById('result-saved-msg').classList.remove('hidden');
@@ -1039,14 +1084,14 @@ function exportJSON() {
 }
 
 function exportCSV() {
-    const headers = ['date', 'word', 'guesses', 'won', 'my_greens', 'my_oranges', 'match_outcome', 'opp_attempts', 'opp_greens', 'opp_oranges', 'opponent', 'loss_reason', 'solver_version', 'guess_log'];
+    const headers = ['date', 'word', 'guesses', 'won', 'my_greens', 'my_oranges', 'match_outcome', 'opp_attempts', 'opp_greens', 'opp_oranges', 'opponent', 'reason', 'solver_version', 'guess_log'];
     const rows = gameHistory.map(g => {
         const m = g.matchResult || {};
         return [
             g.date, g.word || '', g.guesses, g.won ? 1 : 0,
             g.myGreens ?? '', g.myOranges ?? '',
             m.outcome || '', m.oppAttempts ?? '', m.oppGreens ?? '', m.oppOranges ?? '',
-            m.opponent || '', m.lossReason || '',
+            m.opponent || '', m.reason || '',
             g.solverVersion || '',
             (g.guessLog || []).map(gl => gl.word + ':' + gl.pattern.join('')).join(';')
         ].map(v => `"${v}"`).join(',');
@@ -1064,7 +1109,23 @@ function copyLogToClipboard() {
         games: gameHistory
     };
     navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => {
-        showExportStatus('Copied to clipboard!');
+        showExportStatus('Copied all games to clipboard!');
+    }).catch(() => {
+        showExportStatus('Copy failed — try Export JSON instead.');
+    });
+}
+
+function copySessionToClipboard() {
+    const sessionGames = gameHistory.filter(g => g.date >= SESSION_START_TIME);
+    const data = {
+        exportDate: new Date().toISOString(),
+        sessionStart: SESSION_START_TIME,
+        solverVersion: SOLVER_VERSION,
+        totalGames: sessionGames.length,
+        games: sessionGames
+    };
+    navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => {
+        showExportStatus(`Copied ${sessionGames.length} session game(s) to clipboard!`);
     }).catch(() => {
         showExportStatus('Copy failed — try Export JSON instead.');
     });

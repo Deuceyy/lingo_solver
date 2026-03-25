@@ -42,33 +42,18 @@
                     <p id="solved-text"></p>
                     <div id="match-result-section" class="match-result-section">
                         <h4>Report Match Result</h4>
-                        <div class="match-result-row">
-                            <label>Result:</label>
-                            <select id="match-outcome">
-                                <option value="">— select —</option>
-                                <option value="win">Win</option>
-                                <option value="loss">Loss</option>
-                                <option value="draw">Draw</option>
-                                <option value="solo">Solo (no opponent)</option>
-                            </select>
-                        </div>
-                        <div id="opponent-fields" class="match-result-row opponent-fields hidden">
-                            <div class="opp-field"><label>Opp Attempts</label><input type="number" id="opp-attempts" min="1" max="6" placeholder="3"></div>
+                        <div class="match-result-row opponent-fields">
+                            <div class="opp-field"><label>Opp Attempts</label><input type="number" id="opp-attempts" min="1" max="7" placeholder="3"></div>
                             <div class="opp-field"><label>Opp Greens</label><input type="number" id="opp-greens" min="0" max="30" placeholder="7"></div>
                             <div class="opp-field"><label>Opp Oranges</label><input type="number" id="opp-oranges" min="0" max="30" placeholder="0"></div>
                             <div class="opp-field"><label>Opponent</label><input type="text" id="opp-name" placeholder="THECATBURGLAR"></div>
-                            <div class="opp-field"><label>Loss reason</label>
-                                <select id="loss-reason">
-                                    <option value="">— select —</option>
-                                    <option value="fewer_attempts">Fewer attempts</option>
-                                    <option value="more_greens">More green tiles</option>
-                                    <option value="more_oranges">More orange tiles</option>
-                                    <option value="faster_time">Faster time</option>
-                                </select>
-                            </div>
                         </div>
-                        <button id="save-result-btn" class="btn btn-small">Save Result</button>
-                        <span id="result-saved-msg" class="hidden" style="color:var(--correct);margin-left:8px;">Saved!</span>
+                        <div class="match-result-row">
+                            <button id="save-result-btn" class="btn btn-small">Save Result</button>
+                            <button id="save-solo-btn" class="btn btn-small">Solo (no opponent)</button>
+                            <span id="result-saved-msg" class="hidden" style="color:var(--correct);margin-left:8px;">Saved!</span>
+                            <span id="auto-outcome-display" class="hidden" style="margin-left:8px;font-weight:bold;"></span>
+                        </div>
                     </div>
                     <button id="play-again-btn" class="btn btn-primary">Play Again</button>
                 </div>
@@ -152,7 +137,8 @@
             <div class="export-row">
                 <button id="export-json-btn" class="btn btn-small">Export JSON</button>
                 <button id="export-csv-btn" class="btn btn-small">Export CSV</button>
-                <button id="copy-log-btn" class="btn btn-small">Copy to Clipboard</button>
+                <button id="copy-log-btn" class="btn btn-small">Copy All</button>
+                <button id="copy-session-btn" class="btn btn-small">Copy Session</button>
             </div>
             <p id="export-status" class="hidden"></p>
         </div>
