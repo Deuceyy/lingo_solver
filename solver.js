@@ -325,41 +325,50 @@ class WordleSolver {
             return pick;
         }
 
-        // REMAINING-ONLY candidates: every guess can potentially solve
-        // this turn, naturally preserves known greens/oranges, and maximizes
-        // green tile accumulation. Matches how elite human players play —
-        // they always guess words that could be the answer.
-        let candidateWords = remaining;
-        let candidateCodes = remainingCodes;
+        // Candidate selection strategy:
+        // - Large pool (n > 20): remaining-only — every guess can solve
+        // - Small pool (n ≤ 20): use ALL answer words to break clusters
+        //   (e.g., _LANK: BLANK/CLANK/FLANK/PLANK — need a discriminating
+        //   word like "BICEP" to test B/C/F/P in one guess)
+        let candidateWords, candidateCodes;
+        let hasDiscriminators = false;
 
-        // Wider epsilon since all candidates are viable answers.
-        // The frontier filters by partition quality, then we rerank by tiles.
-        let epsilon;
-        if (n > 100) {
-            epsilon = 1.05;     // 5% tolerance
-        } else if (n > 20) {
-            epsilon = 1.10;     // 10% tolerance
-        } else if (n > 5) {
-            epsilon = 1.15;     // 15% tolerance — tiles matter more
+        if (n <= 20) {
+            // Small pool: include all answer words to avoid cluster traps
+            candidateWords = this.answerWords;
+            candidateCodes = this.answerCodes;
+            hasDiscriminators = true;
         } else {
-            epsilon = 1.30;     // 30% tolerance — very small pool, farm tiles
+            // Large pool: remaining-only (every guess can solve this turn)
+            candidateWords = remaining;
+            candidateCodes = remainingCodes;
         }
 
-        // Compute stats for all remaining candidates
-        const allStats = new Array(candidateWords.length);
+        // Epsilon for frontier width
+        let epsilon;
+        if (n > 100) {
+            epsilon = 1.05;
+        } else if (n > 20) {
+            epsilon = 1.10;
+        } else {
+            epsilon = 1.15;
+        }
+
+        // Compute stats for all candidates
+        const allStats = [];
         let bestExpRemaining = Infinity;
 
         for (let i = 0; i < candidateWords.length; i++) {
             const stats = this.computeGuessStats(candidateCodes[i], remainingCodes);
-            allStats[i] = {
-                idx: i,
+            allStats.push({
                 word: candidateWords[i],
                 expectedRemaining: stats.expectedRemaining,
                 entropy: stats.entropy,
                 solveProb: stats.solveProb,
                 expectedGreens: stats.expectedGreens,
-                expectedOranges: stats.expectedOranges
-            };
+                expectedOranges: stats.expectedOranges,
+                isRemaining: remainingSet.has(candidateWords[i])
+            });
 
             if (stats.expectedRemaining < bestExpRemaining) {
                 bestExpRemaining = stats.expectedRemaining;
@@ -375,24 +384,45 @@ class WordleSolver {
             }
         }
 
-        // Stage 2: Rerank frontier by H2H tiebreaker value
-        // All candidates can solve, so rank by: greens > oranges > partition > entropy
-        frontier.sort((a, b) => {
-            // 1. Expected greens — most important H2H tiebreaker
-            const greenDiff = b.expectedGreens - a.expectedGreens;
-            if (Math.abs(greenDiff) > 1e-9) return greenDiff;
+        // Stage 2: Rerank frontier
+        if (hasDiscriminators) {
+            // Small pool sort: partition quality first to break clusters,
+            // but prefer remaining words when partition quality is similar
+            frontier.sort((a, b) => {
+                // If one partitions significantly better (>0.5 diff), use it
+                // This lets discriminating words beat cluster-cycling
+                const remDiff = a.expectedRemaining - b.expectedRemaining;
+                if (Math.abs(remDiff) > 0.5) return remDiff;
 
-            // 2. Expected oranges — second H2H tiebreaker
-            const orangeDiff = b.expectedOranges - a.expectedOranges;
-            if (Math.abs(orangeDiff) > 1e-9) return orangeDiff;
+                // Similar partition quality: prefer remaining word (can solve)
+                if (a.isRemaining !== b.isRemaining) return b.isRemaining - a.isRemaining;
 
-            // 3. Lower expectedRemaining (tighter solve)
-            const remDiff = a.expectedRemaining - b.expectedRemaining;
-            if (Math.abs(remDiff) > 1e-9) return remDiff;
+                // Same type: sort by greens > oranges > partition > entropy
+                const greenDiff = b.expectedGreens - a.expectedGreens;
+                if (Math.abs(greenDiff) > 1e-9) return greenDiff;
 
-            // 4. Higher entropy as final tiebreaker
-            return b.entropy - a.entropy;
-        });
+                const orangeDiff = b.expectedOranges - a.expectedOranges;
+                if (Math.abs(orangeDiff) > 1e-9) return orangeDiff;
+
+                if (Math.abs(remDiff) > 1e-9) return remDiff;
+
+                return b.entropy - a.entropy;
+            });
+        } else {
+            // Large pool sort: all candidates are remaining, greens-first
+            frontier.sort((a, b) => {
+                const greenDiff = b.expectedGreens - a.expectedGreens;
+                if (Math.abs(greenDiff) > 1e-9) return greenDiff;
+
+                const orangeDiff = b.expectedOranges - a.expectedOranges;
+                if (Math.abs(orangeDiff) > 1e-9) return orangeDiff;
+
+                const remDiff = a.expectedRemaining - b.expectedRemaining;
+                if (Math.abs(remDiff) > 1e-9) return remDiff;
+
+                return b.entropy - a.entropy;
+            });
+        }
 
         const best = frontier[0];
 
