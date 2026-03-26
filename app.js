@@ -21,7 +21,7 @@ const ENTRY_COST = 2.10;
 const WIN_PAYOUT = 4.10;
 let h2hStats = { wins: 0, losses: 0, draws: 0, solos: 0, pnl: 0 };
 
-const SOLVER_VERSION = '3.2.0';
+const SOLVER_VERSION = '3.3.0';
 
 // Current game's guess log (for detailed export)
 let currentGameGuesses = [];
